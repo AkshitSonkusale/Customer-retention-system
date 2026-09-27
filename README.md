@@ -1,4 +1,4 @@
-# Mall Customer Churn Prediction System
+# CustomerIQ - Customer Retention System
 
 A full-stack Machine Learning web application that identifies at-risk customers using K-Means Clustering and Random Forest / XGBoost Classification, segments them into behavioural groups, and generates AI-powered personalised retention strategies via Groq LLM — all through an interactive analytics dashboard.
 
