@@ -10,13 +10,21 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
 )
+from xgboost import XGBClassifier
 
 from data_loader import load_data, preprocess, assign_churn_risk
 
+FEATURE_COLS = [
+    "Age", "AnnualIncome", "SpendingScore",
+    "VisitFrequency", "SatisfactionScore",
+    "ComplaintsCount", "LoyaltyPoints",
+]
+REQUIRED_COLS = FEATURE_COLS + ["ChurnRisk"]
+
 _cache = {}
-_model_metrics = {}
-_rf_model = None
-_rf_label_encoder = None
+_models = {}
+_label_encoder = None
+_comparison = None
 
 # FIX: store fitted KMeans objects so predict_customer reuses them
 # instead of re-fitting from scratch on every prediction call.
@@ -122,76 +130,69 @@ def run_clustering(k: int = 5):
     return result
 
 
-def train_churn_model():
-    """
-    Train a RandomForest churn classifier when the loaded dataset contains
-    the required extended columns (VisitFrequency, SatisfactionScore, etc.).
+def reset_cache():
+    global _comparison, _label_encoder
+    _cache.clear()
+    _fitted_km.clear()
+    _models.clear()
+    _comparison = None
+    _label_encoder = None
 
-    FIX: removed the premature `return` that prevented any training from
-    ever happening. The function now gracefully skips training when the
-    required columns are absent (e.g. the default Mall_Customers.csv) and
-    sets metrics to zero so the rest of the app still works.
-    """
-    global _rf_model, _rf_label_encoder, _model_metrics
 
-    if _rf_model is not None:
+def _classification_metrics(y_true, y_pred):
+    return {
+        "accuracy":  round(accuracy_score(y_true, y_pred) * 100, 2),
+        "precision": round(precision_score(y_true, y_pred, average="weighted") * 100, 2),
+        "recall":    round(recall_score(y_true, y_pred, average="weighted") * 100, 2),
+        "f1":        round(f1_score(y_true, y_pred, average="weighted") * 100, 2),
+    }
+
+
+def train_churn_models():
+    """
+    Train Random Forest and XGBoost on the same split when the dataset has the
+    extended churn columns, and keep the one with the higher weighted F1.
+    """
+    global _comparison, _label_encoder
+
+    if _comparison is not None:
         return
 
     df = load_data()
-    print("DATASET COLUMNS:", df.columns.tolist())
-
-    required_cols = [
-        "Age", "AnnualIncome", "SpendingScore",
-        "VisitFrequency", "SatisfactionScore",
-        "ComplaintsCount", "LoyaltyPoints", "ChurnRisk",
-    ]
-    missing = [c for c in required_cols if c not in df.columns]
-
-    missing = [c for c in required_cols if c not in df.columns]
-
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
-        print("MISSING COLUMNS:", missing)
-        _model_metrics = {
-            "accuracy": 0,
-            "precision": 0,
-            "recall": 0,
-            "f1": 0
-        }
+        _comparison = {"available": False, "missing": missing}
         return
-
-    # ── All required columns present: train the model ────────────────────────
-    X = df[[
-        "Age", "AnnualIncome", "SpendingScore",
-        "VisitFrequency", "SatisfactionScore",
-        "ComplaintsCount", "LoyaltyPoints",
-    ]]
 
     le = LabelEncoder()
     y = le.fit_transform(df["ChurnRisk"])
-
+    X = df[FEATURE_COLS]
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    rf.fit(X_train, y_train)
-    y_pred = rf.predict(X_test)
-
-    _model_metrics = {
-        "accuracy":  round(accuracy_score(y_test, y_pred) * 100, 2),
-        "precision": round(precision_score(y_test, y_pred, average="weighted") * 100, 2),
-        "recall":    round(recall_score(y_test, y_pred, average="weighted") * 100, 2),
-        "f1":        round(f1_score(y_test, y_pred, average="weighted") * 100, 2),
+    candidates = {
+        "randomForest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "xgboost": XGBClassifier(
+            n_estimators=200, max_depth=4, learning_rate=0.1,
+            eval_metric="mlogloss", random_state=42,
+        ),
     }
 
-    _rf_model = rf
-    _rf_label_encoder = le
-    print("RF model trained. Metrics:", _model_metrics)
+    results = {}
+    for name, clf in candidates.items():
+        clf.fit(X_train, y_train)
+        results[name] = _classification_metrics(y_test, clf.predict(X_test))
+        _models[name] = clf
+
+    best = max(results, key=lambda n: (results[n]["f1"], results[n]["accuracy"]))
+    _label_encoder = le
+    _comparison = {"available": True, "models": results, "best": best}
 
 
-def get_model_metrics():
-    train_churn_model()
-    return _model_metrics
+def get_model_comparison():
+    train_churn_models()
+    return _comparison
 
 
 def predict_customer(
@@ -237,10 +238,13 @@ def predict_customer(
     churn_prediction = segment_risk["risk"]
     confidence = None
 
-    # ── Step 2: try RF model if available ────────────────────────────────────
-    train_churn_model()
+    # ── Step 2: use the best supervised model if the dataset supports it ─────
+    comparison = get_model_comparison()
+    model_used = None
 
-    if _rf_model is not None:
+    if comparison["available"]:
+        model_used = comparison["best"]
+        model = _models[model_used]
         features = [[
             age,
             income,
@@ -251,10 +255,9 @@ def predict_customer(
             loyalty_points
         ]]
 
-        pred = _rf_model.predict(features)[0]
-        churn_prediction = _rf_label_encoder.inverse_transform([pred])[0]
+        pred = int(model.predict(features)[0])
+        churn_prediction = _label_encoder.inverse_transform([pred])[0]
 
-        # Convert RF labels to UI labels
         if churn_prediction == "High":
             churn_prediction = "High Risk"
         elif churn_prediction == "Medium":
@@ -262,17 +265,8 @@ def predict_customer(
         elif churn_prediction == "Low":
             churn_prediction = "Low Risk"
 
-        probs = _rf_model.predict_proba(features)[0]
-
-        print("Classes:", _rf_label_encoder.classes_)
-        print("Prediction:", churn_prediction)
-        print("Probabilities:", probs)
-        print("Features:", features)
-
-        confidence = round(
-            float(max(probs) * 100),
-            1
-        )
+        probs = model.predict_proba(features)[0]
+        confidence = round(float(max(probs) * 100), 1)
 
     # ── Step 3: build response ───────────────────────────────────────────────
     recommendations = {
@@ -292,6 +286,7 @@ def predict_customer(
         "segmentRisk":        segment_risk["risk"],
         "predictedChurnRisk": churn_prediction,
         "confidence":         confidence,
+        "modelUsed":          model_used,
         "recommendation":     recommendations.get(churn_prediction, "Maintain engagement."),
         "riskColor":          segment_risk["color"],
         "riskBadge":          badge_map.get(churn_prediction, "🟢"),

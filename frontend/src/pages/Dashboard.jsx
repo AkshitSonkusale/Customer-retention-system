@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LineChart, Line } from 'recharts'
+import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LineChart, Line, BarChart, Bar, Legend } from 'recharts'
 
 const CLUSTER_COLORS = ['#7c6ff7', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
+const MODEL_LABELS = { randomForest: 'Random Forest', xgboost: 'XGBoost' }
+const MODEL_COLORS = { randomForest: '#7c6ff7', xgboost: '#10b981' }
+const METRICS = [['accuracy', 'Accuracy'], ['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1']]
 
 const CustomDot = ({ cx, cy, payload }) => {
   const color = CLUSTER_COLORS[payload.cluster % CLUSTER_COLORS.length]
@@ -17,26 +20,46 @@ const KPI_CONFIG = [
 ]
 
 export default function Dashboard({ k, setK, isMobile, dataset, isDefault, onResetDataset }) {
-  const [summary,  setSummary]  = useState(null)
-  const [scatter,  setScatter]  = useState([])
-  const [elbow,    setElbow]    = useState([])
-  const [metrics,  setMetrics]  = useState(null)
-  const [loading,  setLoading]  = useState(true)
+  const [summary,     setSummary]     = useState(null)
+  const [scatter,     setScatter]     = useState([])
+  const [elbow,       setElbow]       = useState([])
+  const [comparison,  setComparison]  = useState(null)
+  const [loading,     setLoading]     = useState(true)
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
+    let active = true
     setLoading(true)
-    Promise.all([api.summary(k), api.cluster(k), api.elbow(10), api.metrics()])
-      .then(([sum, clust, elb, met]) => {
+    Promise.all([api.summary(k), api.cluster(k), api.elbow(10), api.modelComparison()])
+      .then(([sum, clust, elb, cmp]) => {
+        if (!active) return
         setSummary(sum)
         setScatter(clust.scatterData)
         setElbow(elb.data)
-        setMetrics(met)
+        setComparison(cmp)
       })
-      .finally(() => setLoading(false))
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
   }, [k])
 
-  if (loading) return <div className="loading"><div className="spinner" /><span>Running K-Means...</span></div>
-  if (!summary) return null
+  const downloadReport = async () => {
+    setDownloading(true)
+    try {
+      const blob = await api.report(k)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `churn_report_k${k}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      window.alert('Could not generate the report. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (!summary) return loading ? <div className="loading"><div className="spinner" /><span>Running K-Means...</span></div> : null
 
   const { riskBreakdown, clusters, silhouetteScore } = summary
 
@@ -57,11 +80,24 @@ export default function Dashboard({ k, setK, isMobile, dataset, isDefault, onRes
     boxShadow: '3px 3px 0px rgba(0,0,0,0.8)',
   }
 
+  const modelChartData = comparison?.available
+    ? METRICS.map(([key, label]) => ({
+        metric: label,
+        randomForest: comparison.models.randomForest[key],
+        xgboost: comparison.models.xgboost[key],
+      }))
+    : []
+
   return (
-    <div className="fade-in">
-      <div className="page-header">
-        <h2>Churn Overview</h2>
-        <p>K-Means · k={k} · {summary.totalCustomers.toLocaleString()} customers analysed</p>
+    <div className={`fade-in dash-body ${loading ? 'is-refreshing' : ''}`}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h2>Churn Overview</h2>
+          <p>K-Means · k={k} · {summary.totalCustomers.toLocaleString()} customers analysed</p>
+        </div>
+        <button className="btn" onClick={downloadReport} disabled={downloading}>
+          {downloading ? 'Preparing PDF...' : 'Download PDF report'}
+        </button>
       </div>
 
       {/* Mobile-only cluster/dataset controls */}
@@ -101,16 +137,39 @@ export default function Dashboard({ k, setK, isMobile, dataset, isDefault, onRes
         ))}
       </div>
 
-      {/* RF Metrics */}
-      {metrics && (
-        <div className="grid-4" style={{ marginBottom: 20 }}>
-          {[['Accuracy', metrics.accuracy], ['Precision', metrics.precision], ['Recall', metrics.recall], ['F1 Score', metrics.f1]].map(([lbl, val]) => (
-            <div key={lbl} className="card" style={{ background: 'var(--bg3)', borderLeft: '6px solid var(--accent)' }}>
-              <div className="card-title">{lbl}</div>
-              <div className="stat-value" style={{ color: 'var(--accent2)' }}>{Number(val).toFixed(1)}%</div>
-              <div className="stat-label">Random Forest</div>
+      {/* Model comparison */}
+      {comparison && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+            <div className="card-title" style={{ marginBottom: 0 }}>Model Comparison</div>
+            {comparison.available && (
+              <span className="badge badge-low">Selected: {MODEL_LABELS[comparison.best]}</span>
+            )}
+          </div>
+          {comparison.available ? (
+            <>
+              <div className="stat-label" style={{ marginBottom: 12 }}>
+                Both models are trained on the same 80% split and scored on the same 20% test set.
+                The model with the higher weighted F1 is used for predictions.
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={modelChartData} margin={{ top: 10, right: 16, bottom: 0, left: -10 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="0" />
+                  <XAxis dataKey="metric" tick={{ fill: 'var(--text2)', fontSize: 11, fontWeight: 700 }} />
+                  <YAxis domain={[0, 100]} tick={{ fill: 'var(--text2)', fontSize: 11, fontWeight: 700 }} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={v => `${Number(v).toFixed(2)}%`} />
+                  <Legend />
+                  <Bar dataKey="randomForest" name={MODEL_LABELS.randomForest} fill={MODEL_COLORS.randomForest} />
+                  <Bar dataKey="xgboost" name={MODEL_LABELS.xgboost} fill={MODEL_COLORS.xgboost} />
+                </BarChart>
+              </ResponsiveContainer>
+            </>
+          ) : (
+            <div className="stat-label">
+              Random Forest and XGBoost are trained only on datasets that include the churn columns.
+              Missing here: {comparison.missing.join(', ')}. Upload a dataset with these columns to compare models.
             </div>
-          ))}
+          )}
         </div>
       )}
 

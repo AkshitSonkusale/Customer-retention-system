@@ -1,13 +1,13 @@
 import io, uuid
 import pandas as pd
-from fastapi import FastAPI, Query, UploadFile, File, HTTPException
+from fastapi import FastAPI, Query, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 from pydantic import BaseModel
-from model import get_model_metrics
 
 from data_loader import has_upload, get_upload_info, store_upload, clear_upload
-from model import compute_elbow, run_clustering, predict_customer
+from model import compute_elbow, run_clustering, predict_customer, get_model_comparison
+from report import build_report_pdf
 from database import db, users_collection
 from auth import (
     hash_password,
@@ -271,9 +271,19 @@ def predict(req: PredictRequest):
     )
 
 
-@app.get("/metrics")
-def metrics():
-    return get_model_metrics()
+@app.get("/model-comparison")
+def model_comparison():
+    return get_model_comparison()
+
+
+@app.get("/report")
+def report(k: int = Query(default=5, ge=2, le=10)):
+    pdf = build_report_pdf(k)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="churn_report_k{k}.pdf"'},
+    )
 
 
 class RecommendRequest(BaseModel):

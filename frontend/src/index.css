@@ -697,6 +697,9 @@ tr:hover td {
 
 .fade-in { animation: fadeIn 0.25s ease; }
 
+.dash-body { transition: opacity 0.2s ease; }
+.dash-body.is-refreshing { opacity: 0.55; pointer-events: none; }
+
 
 /* ═══════════════════════════════════════════════════════════
    MOBILE RESPONSIVE — max-width: 768px

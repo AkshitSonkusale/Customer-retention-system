@@ -162,6 +162,11 @@ export default function Predict() {
                     </div>
                   )}
                 </div>
+                {result.modelUsed && (
+                  <div style={{ marginTop: 10, fontSize: 10, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                    Model: {result.modelUsed === 'xgboost' ? 'XGBoost' : 'Random Forest'}
+                  </div>
+                )}
 
                 <div style={{ background: info.bg, border: `2px solid ${info.border}`, marginTop: 16, padding: 14, textAlign: 'left', boxShadow: `3px 3px 0px ${info.border}` }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>

@@ -22,5 +22,6 @@ export const api = {
   customers:(k = 5)     => axios.get(`${BASE}/customers?k=${k}`).then(r => r.data),
   predict:  (data)      => axios.post(`${BASE}/predict`, data).then(r => r.data),
   recommend:(data)      => axios.post(`${BASE}/recommend`, data).then(r => r.data),
-  metrics:  ()          => axios.get(`${BASE}/metrics`).then(r => r.data),
+  modelComparison: ()   => axios.get(`${BASE}/model-comparison`).then(r => r.data),
+  report:   (k = 5)     => axios.get(`${BASE}/report?k=${k}`, { responseType: 'blob' }).then(r => r.data),
 }

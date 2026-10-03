@@ -73,11 +73,8 @@ def store_upload(df: pd.DataFrame, col_map: dict, filename: str):
         "row_count": len(df),
     }
 
-    # Clear clustering cache so next call re-runs on new data
     import model as _m
-    _m._cache.clear()
-    # FIX: also reset the fitted KMeans so it is re-trained on new data
-    _m._fitted_km.clear()
+    _m.reset_cache()
 
 
 def clear_upload():
@@ -85,8 +82,7 @@ def clear_upload():
     _uploads_col.delete_many({})
     _uploaded.clear()
     import model as _m
-    _m._cache.clear()
-    _m._fitted_km.clear()
+    _m.reset_cache()
 
 
 # ── Load data (uploaded takes priority over hardcoded) ────────────────────────
