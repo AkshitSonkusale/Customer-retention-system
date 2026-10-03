@@ -9,7 +9,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from data_loader import CSV_PATH, get_upload_info
-from model import get_model_comparison, run_clustering
+from model import RISK_RECOMMENDATIONS, get_model_comparison, run_clustering
 
 MODEL_LABELS = {"randomForest": "Random Forest", "xgboost": "XGBoost"}
 CUSTOMER_ROWS = 50
@@ -35,13 +35,13 @@ def _table(data, col_widths=None):
     return table
 
 
-def build_report_pdf(k: int) -> bytes:
-    summary = run_clustering(k)
-    comparison = get_model_comparison()
+def build_report_pdf(email, k: int) -> bytes:
+    summary = run_clustering(email, k)
+    comparison = get_model_comparison(email)
     styles = getSampleStyleSheet()
     story = []
 
-    dataset_name = get_upload_info().get("filename") or os.path.basename(CSV_PATH)
+    dataset_name = get_upload_info(email).get("filename") or os.path.basename(CSV_PATH)
     story.append(Paragraph("CustomerIQ Churn Report", styles["Title"]))
     story.append(Paragraph(
         f"Generated {datetime.now():%Y-%m-%d %H:%M} &nbsp;|&nbsp; Dataset: {dataset_name}"
@@ -96,6 +96,16 @@ def build_report_pdf(k: int) -> bytes:
             c["avgSpending"], c["avgIncome"], c["avgAge"],
         ])
     story.append(_table(cluster_rows))
+    story.append(Spacer(1, 6 * mm))
+
+    story.append(Paragraph("Recommended Actions", styles["Heading2"]))
+    action_rows = [["Cluster", "Risk", "Customers", "Recommended action"]]
+    for c in summary["clusters"]:
+        action_rows.append([
+            c["id"], c["churnRisk"], f"{c['count']:,}",
+            Paragraph(RISK_RECOMMENDATIONS[c["churnRisk"]], styles["Normal"]),
+        ])
+    story.append(_table(action_rows, col_widths=[18 * mm, 30 * mm, 25 * mm, 101 * mm]))
     story.append(Spacer(1, 6 * mm))
 
     high_risk = [c for c in summary["customers"] if c["riskLevel"] == 3]

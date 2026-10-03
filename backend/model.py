@@ -12,7 +12,17 @@ from sklearn.metrics import (
 )
 from xgboost import XGBClassifier
 
-from data_loader import load_data, preprocess, assign_churn_risk
+from data_loader import (
+    RISK_HIGH_BELOW,
+    RISK_MEDIUM_BELOW,
+    active_upload_id,
+    assign_churn_risk,
+    get_upload,
+    list_uploads,
+    load_data,
+    preprocess,
+    standardize,
+)
 
 FEATURE_COLS = [
     "Age", "AnnualIncome", "SpendingScore",
@@ -21,18 +31,34 @@ FEATURE_COLS = [
 ]
 REQUIRED_COLS = FEATURE_COLS + ["ChurnRisk"]
 
-_cache = {}
-_models = {}
-_label_encoder = None
-_comparison = None
+RISK_RECOMMENDATIONS = {
+    "High Risk":   "Offer retention discounts and personalized engagement campaigns.",
+    "Medium Risk": "Monitor activity and provide targeted promotions.",
+    "Low Risk":    "Maintain engagement and reward loyalty.",
+}
 
-# FIX: store fitted KMeans objects so predict_customer reuses them
-# instead of re-fitting from scratch on every prediction call.
-_fitted_km: dict = {}   # key: k  ->  fitted KMeans instance
+# Per-account state, rebuilt whenever that account's active upload changes.
+_states: dict = {}
 
 
-def compute_elbow(max_k: int = 10):
-    df = load_data()
+def _state(email):
+    upload_id = active_upload_id(email)
+    st = _states.get(email)
+    if st is None or st["upload_id"] != upload_id:
+        st = {
+            "upload_id":     upload_id,
+            "cache":         {},
+            "fitted_km":     {},
+            "models":        {},
+            "comparison":    None,
+            "label_encoder": None,
+        }
+        _states[email] = st
+    return st
+
+
+def compute_elbow(email, max_k: int = 10):
+    df = load_data(email)
     _, scaled, _ = preprocess(df)
 
     wcss = []
@@ -44,20 +70,20 @@ def compute_elbow(max_k: int = 10):
     return [{"k": i + 1, "wcss": w} for i, w in enumerate(wcss)]
 
 
-def run_clustering(k: int = 5):
+def run_clustering(email, k: int = 5):
+    st = _state(email)
     cache_key = f"cluster_{k}"
-    if cache_key in _cache:
-        return _cache[cache_key]
+    if cache_key in st["cache"]:
+        return st["cache"][cache_key]
 
-    df = load_data()
+    df = load_data(email)
     df_proc, scaled, scaler = preprocess(df)
 
     km = KMeans(n_clusters=k, init="k-means++", random_state=42, n_init=10)
     labels = km.fit_predict(scaled)
     df_proc["Cluster"] = labels
 
-    # FIX: cache the fitted KMeans so predict_customer can reuse it
-    _fitted_km[k] = (km, scaler)
+    st["fitted_km"][k] = (km, scaler)
 
     sil = round(silhouette_score(scaled, labels), 4) if k > 1 else 0.0
 
@@ -67,7 +93,6 @@ def run_clustering(k: int = 5):
         cluster_stats[c] = {
             "avg_spending": round(subset["SpendingScore"].mean(), 1),
             "avg_income":   round(subset["AnnualIncome"].mean(), 1),
-            # FIX: Age is now always guaranteed by load_data(), safe to read
             "avg_age":      round(subset["Age"].mean(), 1),
             "count":        len(subset),
         }
@@ -79,7 +104,6 @@ def run_clustering(k: int = 5):
         customers.append({
             "id":           int(row["CustomerID"]),
             "gender":       row["Gender"],
-            # FIX: Age always exists; cast safely
             "age":          int(row["Age"]),
             "annualIncome": int(row["AnnualIncome"]),
             "spendingScore":int(row["SpendingScore"]),
@@ -126,17 +150,8 @@ def run_clustering(k: int = 5):
         ],
     }
 
-    _cache[cache_key] = result
+    st["cache"][cache_key] = result
     return result
-
-
-def reset_cache():
-    global _comparison, _label_encoder
-    _cache.clear()
-    _fitted_km.clear()
-    _models.clear()
-    _comparison = None
-    _label_encoder = None
 
 
 def _classification_metrics(y_true, y_pred):
@@ -148,20 +163,15 @@ def _classification_metrics(y_true, y_pred):
     }
 
 
-def train_churn_models():
-    """
-    Train Random Forest and XGBoost on the same split when the dataset has the
-    extended churn columns, and keep the one with the higher weighted F1.
-    """
-    global _comparison, _label_encoder
-
-    if _comparison is not None:
+def train_churn_models(email):
+    st = _state(email)
+    if st["comparison"] is not None:
         return
 
-    df = load_data()
+    df = load_data(email)
     missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
-        _comparison = {"available": False, "missing": missing}
+        st["comparison"] = {"available": False, "missing": missing}
         return
 
     le = LabelEncoder()
@@ -183,19 +193,41 @@ def train_churn_models():
     for name, clf in candidates.items():
         clf.fit(X_train, y_train)
         results[name] = _classification_metrics(y_test, clf.predict(X_test))
-        _models[name] = clf
+        st["models"][name] = clf
 
     best = max(results, key=lambda n: (results[n]["f1"], results[n]["accuracy"]))
-    _label_encoder = le
-    _comparison = {"available": True, "models": results, "best": best}
+    st["label_encoder"] = le
+    st["comparison"] = {"available": True, "models": results, "best": best}
 
 
-def get_model_comparison():
-    train_churn_models()
-    return _comparison
+def get_model_comparison(email):
+    train_churn_models(email)
+    return _state(email)["comparison"]
+
+
+def get_trends(email):
+    points = []
+    for up in list_uploads(email):
+        parsed = get_upload(email, up["id"])
+        df = standardize(parsed["df"].copy(), parsed["col_map"])
+        spend = df["SpendingScore"]
+        n = len(df)
+        points.append({
+            "id":          up["id"],
+            "filename":    up["filename"],
+            "uploadedAt":  up["uploadedAt"],
+            "rows":        n,
+            "highPct":     round(float((spend < RISK_HIGH_BELOW).mean() * 100), 1),
+            "mediumPct":   round(float(((spend >= RISK_HIGH_BELOW) & (spend < RISK_MEDIUM_BELOW)).mean() * 100), 1),
+            "lowPct":      round(float((spend >= RISK_MEDIUM_BELOW).mean() * 100), 1),
+            "avgSpending": round(float(spend.mean()), 1),
+            "avgIncome":   round(float(df["AnnualIncome"].mean()), 1),
+        })
+    return points
 
 
 def predict_customer(
+    email,
     age: float,
     income: float,
     spending: float,
@@ -206,19 +238,17 @@ def predict_customer(
     loyalty_points: float = 0,
 ):
     # ── Step 1: cluster-based segment risk (always available) ────────────────
-    result = run_clustering(5)
+    result = run_clustering(email, 5)
+    st = _state(email)
 
-    # FIX: reuse the KMeans already fitted in run_clustering instead of
-    # fitting a brand-new one (which was wasteful and could diverge).
-    if 5 in _fitted_km:
-        km, scaler = _fitted_km[5]
+    if 5 in st["fitted_km"]:
+        km, scaler = st["fitted_km"][5]
     else:
-        # Fallback: fit fresh if cache was cleared
-        df = load_data()
+        df = load_data(email)
         _, scaled_all, scaler = preprocess(df)
         km = KMeans(n_clusters=5, init="k-means++", random_state=42, n_init=10)
         km.fit(scaled_all)
-        _fitted_km[5] = (km, scaler)
+        st["fitted_km"][5] = (km, scaler)
 
     raw = np.array([[income, spending]], dtype=float)
     scaled_input = scaler.transform(raw)
@@ -239,12 +269,13 @@ def predict_customer(
     confidence = None
 
     # ── Step 2: use the best supervised model if the dataset supports it ─────
-    comparison = get_model_comparison()
+    comparison = get_model_comparison(email)
+    st = _state(email)
     model_used = None
 
     if comparison["available"]:
         model_used = comparison["best"]
-        model = _models[model_used]
+        model = st["models"][model_used]
         features = [[
             age,
             income,
@@ -256,7 +287,7 @@ def predict_customer(
         ]]
 
         pred = int(model.predict(features)[0])
-        churn_prediction = _label_encoder.inverse_transform([pred])[0]
+        churn_prediction = st["label_encoder"].inverse_transform([pred])[0]
 
         if churn_prediction == "High":
             churn_prediction = "High Risk"
@@ -269,12 +300,6 @@ def predict_customer(
         confidence = round(float(max(probs) * 100), 1)
 
     # ── Step 3: build response ───────────────────────────────────────────────
-    recommendations = {
-        "High Risk":   "Offer retention discounts and personalized engagement campaigns.",
-        "Medium Risk": "Monitor activity and provide targeted promotions.",
-        "Low Risk":    "Maintain engagement and reward loyalty.",
-    }
-
     badge_map = {
         "High Risk": "🔴",
         "Medium Risk": "🟡",
@@ -287,7 +312,7 @@ def predict_customer(
         "predictedChurnRisk": churn_prediction,
         "confidence":         confidence,
         "modelUsed":          model_used,
-        "recommendation":     recommendations.get(churn_prediction, "Maintain engagement."),
+        "recommendation":     RISK_RECOMMENDATIONS.get(churn_prediction, "Maintain engagement."),
         "riskColor":          segment_risk["color"],
         "riskBadge":          badge_map.get(churn_prediction, "🟢"),
     }

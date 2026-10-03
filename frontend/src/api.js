@@ -2,10 +2,32 @@ import axios from 'axios'
 
 const BASE = "https://customeriq-backend.onrender.com"
 
+axios.interceptors.request.use(config => {
+  const token = localStorage.getItem('token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+axios.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401 && err.config?.headers?.Authorization) {
+      localStorage.removeItem('token')
+      window.location.reload()
+    }
+    return Promise.reject(err)
+  }
+)
+
 export const api = {
   // Dataset
   datasetInfo:   ()               => axios.get(`${BASE}/dataset/info`).then(r => r.data),
   resetDataset:  ()               => axios.delete(`${BASE}/dataset`).then(r => r.data),
+
+  // Upload history
+  uploads:        ()              => axios.get(`${BASE}/uploads`).then(r => r.data),
+  activateUpload: (id)            => axios.post(`${BASE}/uploads/${id}/activate`).then(r => r.data),
+  trends:         ()              => axios.get(`${BASE}/trends`).then(r => r.data),
 
   // Upload flow (two-step)
   uploadCSV:     (file)           => {

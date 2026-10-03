@@ -7,7 +7,7 @@ load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama-3.3-70b-versatile"
+GROQ_MODEL   = "openai/gpt-oss-120b"
 
 SYSTEM_PROMPT = (
     "You are a retention strategist for a shopping mall's loyalty programme. "
@@ -49,7 +49,7 @@ def get_ai_recommendation(profile: dict, risk: str, cluster: int, confidence: Op
                     {"role": "user", "content": user_prompt},
                 ],
                 "temperature": 0.4,
-                "max_tokens": 200,
+                "max_tokens": 1000,
             },
             timeout=15,
         )

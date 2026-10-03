@@ -5,13 +5,15 @@ import Predict   from './pages/Predict'
 import Upload    from './pages/Upload'
 import Login     from './pages/Login'
 import Signup    from './pages/Signup'
+import Trends    from './pages/Trends'
 import { api }   from './api'
 import PixelLogo from './components/PixelLogo'
-import { LogOut, Database, LayoutDashboard, Users, Target } from 'lucide-react'
+import { LogOut, Database, LayoutDashboard, Users, Target, TrendingUp } from 'lucide-react'
 
 const NAV = [
   { id: 'upload',    label: 'Dataset',   Icon: Database        },
   { id: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard },
+  { id: 'trends',    label: 'Trends',    Icon: TrendingUp      },
   { id: 'customers', label: 'Customers', Icon: Users           },
   { id: 'predict',   label: 'Predict',   Icon: Target          },
 ]
@@ -151,6 +153,7 @@ export default function App() {
           <Dashboard k={k} setK={setK} isMobile={isMobile} dataset={dataset} isDefault={isDefault}
             onResetDataset={async () => { await api.resetDataset(); handleDatasetReady(null) }} />
         )}
+        {page === 'trends'    && <Trends onDatasetReady={handleDatasetReady} />}
         {page === 'customers' && <Customers k={k} />}
         {page === 'predict'   && <Predict />}
       </main>

@@ -1,12 +1,20 @@
 import io, os, uuid
 import pandas as pd
-from fastapi import FastAPI, Query, UploadFile, File, HTTPException, Response
+from bson import ObjectId
+from fastapi import FastAPI, Depends, Query, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Depends
 from pydantic import BaseModel
 
-from data_loader import CSV_PATH, has_upload, get_upload_info, store_upload, clear_upload
-from model import compute_elbow, run_clustering, predict_customer, get_model_comparison
+from data_loader import (
+    CSV_PATH,
+    activate_upload,
+    active_upload_id,
+    clear_upload,
+    get_upload_info,
+    list_uploads,
+    store_upload,
+)
+from model import compute_elbow, get_model_comparison, get_trends, predict_customer, run_clustering
 from report import build_report_pdf
 from database import db, users_collection
 from auth import (
@@ -28,6 +36,10 @@ app.add_middleware(
 )
 
 _pending: dict = {}
+
+
+def _email(user) -> str:
+    return user["email"].lower().strip()
 
 
 @app.get("/")
@@ -75,7 +87,7 @@ def signup(req: SignupRequest):
     }
     users_collection.insert_one(user)
 
-    token = create_access_token({"email": req.email, "username": req.username})
+    token = create_access_token({"email": req.email.lower().strip(), "username": req.username})
     return {"message": "Signup successful", "access_token": token, "token": token, "token_type": "bearer"}
 
 
@@ -107,7 +119,7 @@ def me(current_user=Depends(get_current_user)):
 
 
 @app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(file: UploadFile = File(...), user=Depends(get_current_user)):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only CSV files are supported.")
     contents = await file.read()
@@ -138,7 +150,7 @@ async def upload_csv(file: UploadFile = File(...)):
     }
 
     token = str(uuid.uuid4())
-    _pending[token] = {"df": df, "filename": file.filename}
+    _pending[token] = {"df": df, "filename": file.filename, "email": _email(user)}
     preview = df.head(5).fillna("").to_dict(orient="records")
 
     return {
@@ -159,12 +171,13 @@ class ConfirmBody(BaseModel):
 
 
 @app.post("/upload/confirm")
-def confirm_upload(body: ConfirmBody):
-    if body.token not in _pending:
+def confirm_upload(body: ConfirmBody, user=Depends(get_current_user)):
+    pending = _pending.get(body.token)
+    if pending is None or pending["email"] != _email(user):
         raise HTTPException(400, "Upload token expired or not found. Please re-upload.")
 
-    df       = _pending[body.token]["df"].copy()
-    filename = _pending[body.token]["filename"]
+    df       = pending["df"].copy()
+    filename = pending["filename"]
 
     required = ["age", "income", "spending"]
     for r in required:
@@ -178,7 +191,7 @@ def confirm_upload(body: ConfirmBody):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=[body.col_map[r] for r in required])
 
-    store_upload(df, body.col_map, filename)
+    store_upload(_email(user), df, body.col_map, filename)
     del _pending[body.token]
 
     return {
@@ -190,9 +203,9 @@ def confirm_upload(body: ConfirmBody):
 
 
 @app.get("/dataset/info")
-def dataset_info():
-    if has_upload():
-        info = get_upload_info()
+def dataset_info(user=Depends(get_current_user)):
+    info = get_upload_info(_email(user))
+    if info:
         return {"source": "upload", **info}
     return {
         "source":    "default",
@@ -209,30 +222,49 @@ def dataset_info():
 
 
 @app.delete("/dataset")
-def reset_dataset():
-    clear_upload()
+def reset_dataset(user=Depends(get_current_user)):
+    clear_upload(_email(user))
     return {"status": "reset", "source": "default"}
 
 
+@app.get("/uploads")
+def uploads(user=Depends(get_current_user)):
+    return {"uploads": list_uploads(_email(user)), "activeId": active_upload_id(_email(user))}
+
+
+@app.post("/uploads/{upload_id}/activate")
+def activate(upload_id: str, user=Depends(get_current_user)):
+    if not ObjectId.is_valid(upload_id):
+        raise HTTPException(400, "Invalid upload id.")
+    if not activate_upload(_email(user), upload_id):
+        raise HTTPException(404, "Upload not found.")
+    return {"status": "active", "id": upload_id}
+
+
+@app.get("/trends")
+def trends(user=Depends(get_current_user)):
+    return {"points": get_trends(_email(user))}
+
+
 @app.get("/elbow")
-def elbow_data(max_k: int = Query(default=10, ge=2, le=15)):
-    return {"data": compute_elbow(max_k)}
+def elbow_data(max_k: int = Query(default=10, ge=2, le=15), user=Depends(get_current_user)):
+    return {"data": compute_elbow(_email(user), max_k)}
 
 
 @app.get("/cluster")
-def cluster_data(k: int = Query(default=5, ge=2, le=10)):
-    return run_clustering(k)
+def cluster_data(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
+    return run_clustering(_email(user), k)
 
 
 @app.get("/customers")
-def get_customers(k: int = Query(default=5, ge=2, le=10)):
-    result = run_clustering(k)
+def get_customers(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
+    result = run_clustering(_email(user), k)
     return {"total": result["totalCustomers"], "customers": result["customers"]}
 
 
 @app.get("/summary")
-def get_summary(k: int = Query(default=5, ge=2, le=10)):
-    result = run_clustering(k)
+def get_summary(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
+    result = run_clustering(_email(user), k)
     return {
         "k":               result["k"],
         "silhouetteScore": result["silhouetteScore"],
@@ -258,8 +290,9 @@ class PredictRequest(BaseModel):
 
 
 @app.post("/predict")
-def predict(req: PredictRequest):
+def predict(req: PredictRequest, user=Depends(get_current_user)):
     return predict_customer(
+        _email(user),
         req.age,
         req.annualIncome,
         req.spendingScore,
@@ -272,13 +305,13 @@ def predict(req: PredictRequest):
 
 
 @app.get("/model-comparison")
-def model_comparison():
-    return get_model_comparison()
+def model_comparison(user=Depends(get_current_user)):
+    return get_model_comparison(_email(user))
 
 
 @app.get("/report")
-def report(k: int = Query(default=5, ge=2, le=10)):
-    pdf = build_report_pdf(k)
+def report(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
+    pdf = build_report_pdf(_email(user), k)
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -301,7 +334,7 @@ class RecommendRequest(BaseModel):
 
 
 @app.post("/recommend")
-def recommend(req: RecommendRequest):
+def recommend(req: RecommendRequest, user=Depends(get_current_user)):
     profile = req.model_dump(exclude={"predictedChurnRisk", "cluster", "confidence"})
     try:
         text = get_ai_recommendation(profile, req.predictedChurnRisk, req.cluster, req.confidence)
