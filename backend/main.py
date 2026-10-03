@@ -1,11 +1,11 @@
-import io, uuid
+import io, os, uuid
 import pandas as pd
 from fastapi import FastAPI, Query, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 from pydantic import BaseModel
 
-from data_loader import has_upload, get_upload_info, store_upload, clear_upload
+from data_loader import CSV_PATH, has_upload, get_upload_info, store_upload, clear_upload
 from model import compute_elbow, run_clustering, predict_customer, get_model_comparison
 from report import build_report_pdf
 from database import db, users_collection
@@ -196,8 +196,8 @@ def dataset_info():
         return {"source": "upload", **info}
     return {
         "source":    "default",
-        "filename":  "synthetic_customer_dataset.csv",
-        "row_count": 10000,
+        "filename":  os.path.basename(CSV_PATH),
+        "row_count": len(pd.read_csv(CSV_PATH)),
         "col_map": {
             "id":       "CustomerID",
             "gender":   "Gender",

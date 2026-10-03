@@ -1,4 +1,5 @@
 import io
+import os
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -7,7 +8,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from data_loader import get_upload_info
+from data_loader import CSV_PATH, get_upload_info
 from model import get_model_comparison, run_clustering
 
 MODEL_LABELS = {"randomForest": "Random Forest", "xgboost": "XGBoost"}
@@ -40,7 +41,7 @@ def build_report_pdf(k: int) -> bytes:
     styles = getSampleStyleSheet()
     story = []
 
-    dataset_name = get_upload_info().get("filename") or "synthetic_customer_dataset.csv"
+    dataset_name = get_upload_info().get("filename") or os.path.basename(CSV_PATH)
     story.append(Paragraph("CustomerIQ Churn Report", styles["Title"]))
     story.append(Paragraph(
         f"Generated {datetime.now():%Y-%m-%d %H:%M} &nbsp;|&nbsp; Dataset: {dataset_name}"
