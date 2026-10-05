@@ -1,15 +1,37 @@
 import { useState, useRef } from 'react'
+import { UploadCloud, FileSpreadsheet, Columns3, RotateCcw, CheckCircle2, ArrowLeft, ArrowRight } from 'lucide-react'
 import { api } from '../api'
+import { errorMessage } from '../theme'
+import { Alert } from '../components/States'
 
 const ROLES = [
   { key: 'id',       label: 'Customer ID',    required: false, hint: 'Unique row identifier' },
   { key: 'gender',   label: 'Gender',         required: false, hint: 'Male / Female column'  },
   { key: 'age',      label: 'Age',            required: true,  hint: 'Numeric age column'    },
-  { key: 'income',   label: 'Annual Income',  required: true,  hint: 'Numeric income column' },
-  { key: 'spending', label: 'Spending Score', required: true,  hint: 'Numeric score 1–100'   },
+  { key: 'income',   label: 'Annual income',  required: true,  hint: 'Numeric income column' },
+  { key: 'spending', label: 'Spending score', required: true,  hint: 'Numeric score, 1–100'  },
 ]
 
-export default function Upload({ onDatasetReady, currentDataset }) {
+const STEPS = ['Upload file', 'Map columns', 'Analyse']
+
+function Stepper({ current }) {
+  return (
+    <ol style={{ display: 'flex', gap: 8, listStyle: 'none', marginBottom: 20, flexWrap: 'wrap' }} aria-label="Upload progress">
+      {STEPS.map((s, i) => {
+        const state = i < current ? 'done' : i === current ? 'current' : 'todo'
+        return (
+          <li key={s} aria-current={state === 'current' ? 'step' : undefined}
+            className={`filter-btn ${state === 'current' ? 'active' : ''}`}
+            style={{ cursor: 'default', opacity: state === 'todo' ? 0.6 : 1, boxShadow: state === 'current' ? 'var(--shadow-sm)' : 'none' }}>
+            {state === 'done' ? <CheckCircle2 size={13} /> : <span>{i + 1}</span>} {s}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+export default function Upload({ onDatasetReady, onReset, currentDataset }) {
   const [step,       setStep]       = useState('idle')
   const [uploadData, setUploadData] = useState(null)
   const [colMap,     setColMap]     = useState({})
@@ -18,7 +40,8 @@ export default function Upload({ onDatasetReady, currentDataset }) {
   const fileRef = useRef()
 
   const handleFile = async (file) => {
-    if (!file || !file.name.endsWith('.csv')) { setError('Please select a CSV file.'); return }
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.csv')) { setError('Please choose a .csv file.'); return }
     setError(''); setStep('uploading')
     try {
       const data = await api.uploadCSV(file)
@@ -26,96 +49,92 @@ export default function Upload({ onDatasetReady, currentDataset }) {
       setColMap(data.suggestion || {})
       setStep('mapping')
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Upload failed. Check backend is running.')
+      setError(errorMessage(e, 'Upload failed. Please try again.'))
       setStep('idle')
     }
   }
 
   const handleConfirm = async () => {
     for (const r of ROLES.filter(r => r.required)) {
-      if (!colMap[r.key]) { setError(`Map the "${r.label}" column.`); return }
+      if (!colMap[r.key]) { setError(`Choose a column for "${r.label}".`); return }
     }
     setError(''); setStep('confirming')
     try {
       await api.confirmUpload(uploadData.token, colMap)
-      setStep('done')
       onDatasetReady({ filename: uploadData.filename, rows: uploadData.totalRows, colMap })
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Could not confirm mapping.')
+      setError(errorMessage(e, 'Could not apply the column mapping.'))
       setStep('mapping')
     }
   }
 
+  const openPicker = () => { if (step !== 'uploading') fileRef.current.click() }
+
   if (step === 'idle' || step === 'uploading') return (
     <div className="fade-in">
       <div className="page-header">
-        <h2>Upload Dataset</h2>
-        <p>Upload your own CSV to run analysis on your customer data</p>
+        <h2>Dataset</h2>
+        <p>Upload your own customer CSV to run the full analysis on it</p>
       </div>
 
+      <Stepper current={0} />
+
       {currentDataset && (
-        <div className="card" style={{ marginBottom: 20, borderLeft: '6px solid var(--low)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="card section kpi" style={{ borderLeftColor: 'var(--low)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, letterSpacing: 2, color: 'var(--low)' }}>
-              ✓ ACTIVE: {currentDataset.filename}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>
-              {currentDataset.rows.toLocaleString()} rows loaded
-            </div>
+            <div className="eyebrow">Currently active</div>
+            <div style={{ fontWeight: 800, fontSize: 15, marginTop: 2 }}>{currentDataset.filename}</div>
+            <div className="muted">{Number(currentDataset.rows).toLocaleString()} rows loaded</div>
           </div>
-          <button className="k-btn" onClick={async () => { await api.resetDataset(); onDatasetReady(null) }}>
-            ↩ Reset Default
+          <button className="btn btn-sm btn-secondary btn-auto" onClick={onReset}>
+            <RotateCcw size={13} /> Use default dataset
           </button>
         </div>
       )}
 
       <div
-        className="drop-zone"
-        style={{ borderColor: drag ? 'var(--accent)' : 'rgba(255,255,255,0.55)', boxShadow: drag ? 'var(--shadow-accent-lg)' : 'none', transform: drag ? 'translate(-3px,-3px)' : 'none' }}
+        className={`drop-zone ${drag ? 'is-dragging' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label="Upload a CSV file"
+        aria-busy={step === 'uploading'}
         onDragOver={e => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]) }}
-        onClick={() => fileRef.current.click()}
+        onClick={openPicker}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker() } }}
       >
-        <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }}
-          onChange={e => handleFile(e.target.files[0])} />
+        <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+          onChange={e => { handleFile(e.target.files[0]); e.target.value = '' }} />
 
         {step === 'uploading' ? (
-          <div>
-            <div className="spinner" style={{ margin: '0 auto 16px' }} />
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: 3, color: 'var(--text2)' }}>
-              PARSING MATRIX...
-            </div>
-          </div>
+          <>
+            <div className="spinner" style={{ marginBottom: 12 }} />
+            <div className="drop-zone-title">Reading your file...</div>
+          </>
         ) : (
-          <div>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📂</div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, letterSpacing: 3, color: drag ? 'var(--accent2)' : 'var(--text)', marginBottom: 8 }}>
-              DROP CSV HERE OR CLICK TO BROWSE
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
-              Requires numeric columns: Age, Income, Spending Score
-            </div>
-          </div>
+          <>
+            <div className="drop-zone-icon"><UploadCloud size={26} /></div>
+            <div className="drop-zone-title">{drag ? 'Drop to upload' : 'Drop a CSV here or click to browse'}</div>
+            <div className="muted">Needs numeric columns for age, annual income and spending score</div>
+          </>
         )}
       </div>
 
-      {error && (
-        <div style={{ marginTop: 12, color: 'var(--high)', fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, border: '2px solid var(--high)', padding: '8px 12px' }}>
-          ⚠ {error}
-        </div>
-      )}
+      {error && <Alert style={{ marginTop: 14 }}>{error}</Alert>}
 
       <div className="grid-3" style={{ marginTop: 24 }}>
         {[
-          { icon: '📋', title: 'Any CSV Format', desc: 'Any column names — map them to roles in the next step.' },
-          { icon: '🔢', title: '3 Numeric Cols', desc: 'Age, Income, and Spending Score are required fields.' },
-          { icon: '🔄', title: 'Revert Anytime', desc: 'Reset to the default dataset with one click.' },
-        ].map(c => (
-          <div key={c.title} className="card" style={{ background: 'var(--bg3)' }}>
-            <div style={{ fontSize: 28, marginBottom: 10 }}>{c.icon}</div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, letterSpacing: 2, marginBottom: 6 }}>{c.title}</div>
-            <div style={{ color: 'var(--text2)', fontSize: 12, fontWeight: 600 }}>{c.desc}</div>
+          { Icon: FileSpreadsheet, title: 'Any column names', desc: 'You map your columns to the right roles in the next step.' },
+          { Icon: Columns3,        title: '3 required fields', desc: 'Age, annual income and spending score must be numeric.' },
+          { Icon: RotateCcw,       title: 'Switch anytime',    desc: 'Go back to the default dataset or a past upload with one click.' },
+        ].map(({ Icon, title, desc }) => (
+          <div key={title} className="card card-flat info-tile">
+            <div className="info-tile-icon"><Icon size={18} /></div>
+            <div>
+              <div className="info-tile-title">{title}</div>
+              <div className="muted">{desc}</div>
+            </div>
           </div>
         ))}
       </div>
@@ -125,50 +144,49 @@ export default function Upload({ onDatasetReady, currentDataset }) {
   if (step === 'mapping' || step === 'confirming') return (
     <div className="fade-in">
       <div className="page-header">
-        <h2>Map Columns</h2>
+        <h2>Map columns</h2>
         <p>{uploadData.filename} · {uploadData.totalRows.toLocaleString()} rows detected</p>
       </div>
 
+      <Stepper current={1} />
+
       <div className="grid-2" style={{ alignItems: 'start' }}>
         <div className="card">
-          <div className="card-title">Column Roles</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card-title">Column roles</div>
+          <p className="card-sub">We pre-filled our best guess. Check each one before continuing.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {ROLES.map(role => (
               <div key={role.key} className="form-group">
-                <label className="form-label">
+                <label className="form-label" htmlFor={`map-${role.key}`}>
                   {role.label}
-                  {role.required
-                    ? <span style={{ color: 'var(--high)', marginLeft: 4 }}>*</span>
-                    : <span style={{ color: 'var(--text3)', marginLeft: 4 }}>(optional)</span>}
+                  {role.required ? <span className="req" aria-hidden="true">*</span> : <span className="opt">(optional)</span>}
                 </label>
-                <select className="form-select" value={colMap[role.key] || ''}
+                <select id={`map-${role.key}`} className="form-select" value={colMap[role.key] || ''}
                   onChange={e => setColMap(m => ({ ...m, [role.key]: e.target.value || undefined }))}>
-                  <option value="">— not mapped —</option>
+                  <option value="">— Not mapped —</option>
                   {uploadData.columns.map(col => <option key={col} value={col}>{col}</option>)}
                 </select>
-                <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>{role.hint}</div>
+                <div className="form-hint">{role.hint}</div>
               </div>
             ))}
           </div>
 
-          {error && (
-            <div style={{ color: 'var(--high)', fontWeight: 800, fontSize: 11, marginTop: 10, textTransform: 'uppercase', letterSpacing: 1, border: '2px solid var(--high)', padding: '8px 12px' }}>
-              ⚠ {error}
-            </div>
-          )}
+          {error && <Alert style={{ marginTop: 16 }}>{error}</Alert>}
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-            <button className="btn" style={{ background: 'transparent', color: 'var(--text2)' }}
-              onClick={() => { setStep('idle'); setUploadData(null) }}>← Back</button>
-            <button className="btn" onClick={handleConfirm} disabled={step === 'confirming'}>
-              {step === 'confirming' ? 'Applying...' : 'Confirm Schema →'}
+          <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+            <button className="btn btn-secondary btn-auto" onClick={() => { setStep('idle'); setUploadData(null); setError('') }}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button className="btn" style={{ marginTop: 0 }} onClick={handleConfirm} disabled={step === 'confirming'}>
+              {step === 'confirming' ? <><div className="spinner spinner-sm" /> Applying</> : <>Confirm and analyse <ArrowRight size={15} /></>}
             </button>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-title">Preview — First 5 Rows</div>
-          <div style={{ overflowX: 'auto', border: '2px solid var(--border-strong)' }}>
+          <div className="card-title">Preview</div>
+          <p className="card-sub">First 5 rows of your file</p>
+          <div className="table-wrap">
             <table>
               <thead>
                 <tr>{uploadData.columns.map(c => <th key={c}>{c}</th>)}</tr>
@@ -182,7 +200,7 @@ export default function Upload({ onDatasetReady, currentDataset }) {
               </tbody>
             </table>
           </div>
-          <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text3)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1 }}>
+          <div className="chart-note">
             {uploadData.totalRows.toLocaleString()} rows · {uploadData.numericColumns.length} numeric · {uploadData.categoricalColumns.length} text columns
           </div>
         </div>
@@ -190,21 +208,5 @@ export default function Upload({ onDatasetReady, currentDataset }) {
     </div>
   )
 
-  return (
-    <div className="fade-in">
-      <div className="page-header"><h2>Dataset Ready</h2></div>
-      <div className="card" style={{ textAlign: 'center', padding: 56, background: 'var(--bg3)', maxWidth: 500 }}>
-        <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, letterSpacing: 3, marginBottom: 8 }}>
-          {uploadData.filename}
-        </div>
-        <div style={{ color: 'var(--text3)', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 24 }}>
-          {uploadData.totalRows.toLocaleString()} rows loaded · K-Means will run on your data
-        </div>
-        <button className="btn" onClick={() => onDatasetReady({ filename: uploadData.filename, rows: uploadData.totalRows, colMap })}>
-          Go to Dashboard →
-        </button>
-      </div>
-    </div>
-  )
+  return null
 }

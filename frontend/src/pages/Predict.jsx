@@ -1,28 +1,41 @@
 import { useState } from 'react'
+import { Target, Sparkles, ArrowRight } from 'lucide-react'
 import { api } from '../api'
+import { RISK } from '../theme'
+import { Alert, EmptyState } from '../components/States'
 
+// [label, type, placeholder/options, key, required, extra input attrs]
 const FIELDS = [
-  ['Gender',              'select', ['Male','Female'],  'gender'],
-  ['Age',                 'number', 'e.g. 28',          'age'],
-  ['Annual Income (k$)',  'number', 'e.g. 65',          'annualIncome'],
-  ['Spending Score',      'number', 'e.g. 72',          'spendingScore'],
-  ['Visit Frequency',     'number', 'e.g. 12',          'visitFrequency'],
-  ['Satisfaction (1-10)', 'number', 'e.g. 8',           'satisfactionScore'],
-  ['Complaints Count',    'number', 'e.g. 1',           'complaintsCount'],
-  ['Loyalty Points',      'number', 'e.g. 500',         'loyaltyPoints'],
+  ['Gender',              'select', ['Male', 'Female'], 'gender',            false],
+  ['Age',                 'number', 'e.g. 28',          'age',               true,  { min: 1, max: 100 }],
+  ['Annual income (k$)',  'number', 'e.g. 65',          'annualIncome',      true,  { min: 1 }],
+  ['Spending score',      'number', '1 – 100',          'spendingScore',     true,  { min: 1, max: 100 }],
+  ['Visits per month',    'number', 'e.g. 12',          'visitFrequency',    false, { min: 0 }],
+  ['Satisfaction (1–10)', 'number', 'Default 5',        'satisfactionScore', false, { min: 1, max: 10 }],
+  ['Complaints',          'number', 'e.g. 1',           'complaintsCount',   false, { min: 0 }],
+  ['Loyalty points',      'number', 'e.g. 500',         'loyaltyPoints',     false, { min: 0 }],
 ]
 
 const RISK_INFO = {
-  'High Risk':   { tips: ['Send personalised discount offer', 'Invite to loyalty programme', 'Schedule outreach call'], border: 'var(--high)',   bg: 'rgba(239,68,68,0.08)' },
-  'Medium Risk': { tips: ['Send seasonal promotions', 'Highlight new arrivals', 'Offer membership upgrade'],            border: 'var(--med)',    bg: 'rgba(245,158,11,0.08)' },
-  'Low Risk':    { tips: ['Reward with exclusive access', 'Invite to VIP events', 'Collect feedback'],                 border: 'var(--low)',    bg: 'rgba(16,185,129,0.08)' },
+  'High Risk':   { level: 3, tips: ['Send a personalised discount offer', 'Invite to the loyalty programme', 'Schedule an outreach call'] },
+  'Medium Risk': { level: 2, tips: ['Send seasonal promotions', 'Highlight new arrivals', 'Offer a membership upgrade'] },
+  'Low Risk':    { level: 1, tips: ['Reward with exclusive access', 'Invite to VIP events', 'Ask for feedback'] },
+}
+
+// Mirrors RISK_HIGH_BELOW / RISK_MEDIUM_BELOW in backend/data_loader.py
+const TIERS = [
+  { level: 3, rule: 'Spending score below 35', desc: 'Disengaged customers who need intervention now.' },
+  { level: 2, rule: 'Spending score 35–59',    desc: 'Occasional shoppers who are open to competitor offers.' },
+  { level: 1, rule: 'Spending score 60+',      desc: 'Loyal, frequent visitors. Maintain and reward.' },
+]
+
+const EMPTY = {
+  age: '', annualIncome: '', spendingScore: '', gender: 'Male',
+  visitFrequency: '', satisfactionScore: '', complaintsCount: '', loyaltyPoints: '',
 }
 
 export default function Predict() {
-  const [form, setForm] = useState({
-    age: '', annualIncome: '', spendingScore: '', gender: 'Male',
-    visitFrequency: '', satisfactionScore: '', complaintsCount: '', loyaltyPoints: ''
-  })
+  const [form,    setForm]    = useState(EMPTY)
   const [result,  setResult]  = useState(null)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
@@ -34,30 +47,34 @@ export default function Predict() {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const validate = () => {
-    if (!form.age || !form.annualIncome || !form.spendingScore) return 'Fill required fields.'
-    if (form.age < 1 || form.age > 100)           return 'Age must be 1–100.'
-    if (form.annualIncome < 1)                     return 'Income must be positive.'
-    if (form.spendingScore < 1 || form.spendingScore > 100) return 'Spending score must be 1–100.'
+    const age = Number(form.age), income = Number(form.annualIncome), spend = Number(form.spendingScore)
+    if (!form.age || !form.annualIncome || !form.spendingScore) return 'Age, annual income and spending score are required.'
+    if (age < 1 || age > 100)     return 'Age must be between 1 and 100.'
+    if (income < 1)               return 'Annual income must be a positive number.'
+    if (spend < 1 || spend > 100) return 'Spending score must be between 1 and 100.'
+    if (form.satisfactionScore && (Number(form.satisfactionScore) < 1 || Number(form.satisfactionScore) > 10)) return 'Satisfaction must be between 1 and 10.'
     return ''
   }
 
-  const handleSubmit = async () => {
+  const payload = () => ({
+    age: Number(form.age), annualIncome: Number(form.annualIncome),
+    spendingScore: Number(form.spendingScore), gender: form.gender,
+    visitFrequency: Number(form.visitFrequency || 0),
+    satisfactionScore: Number(form.satisfactionScore || 5),
+    complaintsCount: Number(form.complaintsCount || 0),
+    loyaltyPoints: Number(form.loyaltyPoints || 0),
+  })
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
     const err = validate()
     if (err) { setError(err); return }
     setError(''); setLoading(true)
     setAiRec(''); setAiError('')
     try {
-      const res = await api.predict({
-        age: Number(form.age), annualIncome: Number(form.annualIncome),
-        spendingScore: Number(form.spendingScore), gender: form.gender,
-        visitFrequency: Number(form.visitFrequency || 0),
-        satisfactionScore: Number(form.satisfactionScore || 5),
-        complaintsCount: Number(form.complaintsCount || 0),
-        loyaltyPoints: Number(form.loyaltyPoints || 0),
-      })
-      setResult(res)
+      setResult(await api.predict(payload()))
     } catch {
-      setError('Cannot connect to backend. Make sure API is running.')
+      setError('Could not reach the prediction service. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -68,155 +85,142 @@ export default function Predict() {
     setAiLoading(true); setAiError('')
     try {
       const res = await api.recommend({
-        age: Number(form.age), annualIncome: Number(form.annualIncome),
-        spendingScore: Number(form.spendingScore), gender: form.gender,
-        visitFrequency: Number(form.visitFrequency || 0),
-        satisfactionScore: Number(form.satisfactionScore || 5),
-        complaintsCount: Number(form.complaintsCount || 0),
-        loyaltyPoints: Number(form.loyaltyPoints || 0),
+        ...payload(),
         predictedChurnRisk: result.predictedChurnRisk,
         cluster: result.cluster,
         confidence: result.confidence,
       })
       setAiRec(res.recommendation)
     } catch {
-      setAiError('AI recommendation unavailable right now.')
+      setAiError('AI recommendation is unavailable right now. Try again in a moment.')
     } finally {
       setAiLoading(false)
     }
   }
 
+  const reset = () => { setForm(EMPTY); setResult(null); setError(''); setAiRec(''); setAiError('') }
+
+  const info = result && (RISK_INFO[result.predictedChurnRisk] || RISK_INFO['Medium Risk'])
+  const risk = info && RISK[info.level]
+
   return (
     <div className="fade-in">
       <div className="page-header">
-        <h2>Customer Intelligence</h2>
-        <p>Input customer profile — get instant churn risk prediction with confidence score</p>
+        <h2>Predict churn</h2>
+        <p>Enter a customer profile to get their churn risk, cluster and suggested next steps</p>
       </div>
 
-      <div className="grid-2" style={{ maxWidth: 900, alignItems: 'stretch' }}>
+      <div className="grid-2 section" style={{ alignItems: 'stretch' }}>
         {/* Form */}
-        <div className="card">
-          <div className="card-title">Profile Matrix</div>
+        <form className="card" onSubmit={handleSubmit} noValidate>
+          <div className="card-title">Customer profile</div>
+          <p className="card-sub">Fields marked <span style={{ color: 'var(--high-ink)', fontWeight: 800 }}>*</span> are required. The rest improve accuracy.</p>
           <div className="form-grid">
-            {FIELDS.map(([lbl, type, opt, key]) => (
+            {FIELDS.map(([lbl, type, opt, key, required, attrs]) => (
               <div className="form-group" key={key}>
-                <label className="form-label">{lbl}</label>
+                <label className="form-label" htmlFor={`f-${key}`}>
+                  {lbl}{required && <span className="req" aria-hidden="true">*</span>}
+                </label>
                 {type === 'select' ? (
-                  <select className="form-select" value={form[key]} onChange={e => set(key, e.target.value)}>
+                  <select id={`f-${key}`} className="form-select" value={form[key]} onChange={e => set(key, e.target.value)}>
                     {opt.map(o => <option key={o}>{o}</option>)}
                   </select>
                 ) : (
-                  <input className="form-input" style={{ paddingLeft: 12 }} type="number" placeholder={opt}
+                  <input id={`f-${key}`} className="form-input" type="number" inputMode="decimal" placeholder={opt}
+                    required={required} {...attrs}
                     value={form[key]} onChange={e => set(key, e.target.value)} />
                 )}
               </div>
             ))}
           </div>
 
-          {error && (
-            <div style={{ color: 'var(--high)', fontWeight: 800, fontSize: 11, marginTop: 12, textTransform: 'uppercase', letterSpacing: 1, border: '2px solid var(--high)', padding: '8px 12px' }}>
-              ⚠ {error}
-            </div>
-          )}
+          {error && <Alert style={{ marginTop: 16 }}>{error}</Alert>}
 
-          <button className="btn" onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Predicting...' : 'Predict Churn Risk →'}
-          </button>
-        </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+            <button type="submit" className="btn" style={{ marginTop: 0 }} disabled={loading}>
+              {loading ? <><div className="spinner spinner-sm" /> Predicting</> : <>Predict churn risk <ArrowRight size={16} /></>}
+            </button>
+            {result && (
+              <button type="button" className="btn btn-secondary btn-auto" onClick={reset}>Clear</button>
+            )}
+          </div>
+        </form>
 
         {/* Result panel */}
-        <div className="card" style={{ background: 'var(--bg3)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', minHeight: 300 }}>
-          {!result && !loading && (
-            <div>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🎯</div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: 3, color: 'var(--text3)', textTransform: 'uppercase' }}>
-                Awaiting Input
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, marginTop: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Fill the form to get prediction
-              </div>
+        <div className="card result-panel" aria-live="polite">
+          {!result && (
+            <div style={{ margin: 'auto' }}>
+              {loading
+                ? <div className="loading"><div className="spinner" /><span>Scoring customer...</span></div>
+                : <EmptyState icon={Target} title="No prediction yet">
+                    Fill in the profile and press Predict. The risk level, cluster and retention ideas will appear here.
+                  </EmptyState>}
             </div>
           )}
 
-          {loading && <div className="loading"><div className="spinner" /></div>}
+          {result && (
+            <div className="fade-in" style={{ opacity: loading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+              <div className="eyebrow">Predicted churn risk</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 52, lineHeight: 1, letterSpacing: 1, color: 'var(--text)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span className="swatch" style={{ width: 18, height: 18, background: risk.color }} />
+                {result.predictedChurnRisk}
+              </div>
 
-          {result && !loading && (() => {
-            const info   = RISK_INFO[result.predictedChurnRisk] || RISK_INFO['Medium Risk']
-            const bClass = result.riskLevel === 3 ? 'badge-high' : result.riskLevel === 2 ? 'badge-med' : 'badge-low'
-            return (
-              <div style={{ width: '100%', animation: 'fadeIn 0.25s ease' }}>
-                <div style={{ fontSize: 44, marginBottom: 8 }}>{result.riskBadge}</div>
-                <span className={`badge ${bClass}`} style={{ fontSize: 13, padding: '6px 18px' }}>
-                  {result.predictedChurnRisk}
-                </span>
-
-                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center', gap: 24 }}>
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 1 }}>Cluster</div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, letterSpacing: 2, color: 'var(--text)' }}>{result.cluster}</div>
-                  </div>
-                  {result.confidence && (
-                    <div>
-                      <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 1 }}>Confidence</div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, letterSpacing: 2, color: 'var(--accent2)' }}>{result.confidence}%</div>
-                    </div>
-                  )}
+              <div className="result-metrics">
+                <div className="result-metric">
+                  <div className="eyebrow">Cluster</div>
+                  <div className="result-metric-val">{result.cluster}</div>
                 </div>
-                {result.modelUsed && (
-                  <div style={{ marginTop: 10, fontSize: 10, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 1 }}>
-                    Model: {result.modelUsed === 'xgboost' ? 'XGBoost' : 'Random Forest'}
-                  </div>
-                )}
-
-                <div style={{ background: info.bg, border: `2px solid ${info.border}`, marginTop: 16, padding: 14, textAlign: 'left', boxShadow: `3px 3px 0px ${info.border}` }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-                    {result.recommendation}
-                  </div>
-                  {info.tips.map((t, i) => (
-                    <div key={i} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginTop: 4 }}>→ {t}</div>
-                  ))}
+                <div className="result-metric">
+                  <div className="eyebrow">Confidence</div>
+                  <div className="result-metric-val">{result.confidence != null ? `${result.confidence}%` : '—'}</div>
                 </div>
-
-                <div style={{ marginTop: 12, textAlign: 'left' }}>
-                  {!aiRec && (
-                    <button className="btn" style={{ width: '100%' }} onClick={handleAiRecommend} disabled={aiLoading}>
-                      {aiLoading ? 'Thinking...' : '✨ Get AI Recommendation'}
-                    </button>
-                  )}
-                  {aiError && (
-                    <div style={{ color: 'var(--high)', fontWeight: 700, fontSize: 11, marginTop: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                      ⚠ {aiError}
-                    </div>
-                  )}
-                  {aiRec && (
-                    <div style={{ background: 'var(--bg3)', border: '2px solid var(--accent2)', marginTop: 8, padding: 14, boxShadow: '3px 3px 0px var(--accent2)' }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--accent2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
-                        ✨ AI Retention Strategy
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', lineHeight: 1.6 }}>{aiRec}</div>
-                    </div>
-                  )}
+                <div className="result-metric">
+                  <div className="eyebrow">Model</div>
+                  <div className="result-metric-val" style={{ fontSize: 20, paddingTop: 6 }}>
+                    {result.modelUsed === 'xgboost' ? 'XGBoost' : result.modelUsed ? 'Random Forest' : 'K-Means'}
+                  </div>
                 </div>
               </div>
-            )
-          })()}
+
+              <div className="callout" style={{ borderLeftColor: risk.color }}>
+                <div className="callout-title">{result.recommendation}</div>
+                <ul>{info.tips.map(t => <li key={t}>{t}</li>)}</ul>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                {!aiRec && (
+                  <button className="btn btn-secondary" style={{ marginTop: 0 }} onClick={handleAiRecommend} disabled={aiLoading}>
+                    {aiLoading ? <><div className="spinner spinner-sm" /> Writing strategy</> : <><Sparkles size={15} /> Get AI retention strategy</>}
+                  </button>
+                )}
+                {aiError && <Alert style={{ marginTop: 10 }}>{aiError}</Alert>}
+                {aiRec && (
+                  <div className="callout fade-in" style={{ borderLeftColor: 'var(--accent)' }}>
+                    <div className="eyebrow" style={{ color: 'var(--accent2)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={13} /> AI retention strategy
+                    </div>
+                    <div className="ai-text">{aiRec}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Risk tier legend */}
-      <div className="grid-3" style={{ marginTop: 20, maxWidth: 900 }}>
-        {[
-          { risk: 'High Risk', emoji: '🔴', desc: 'Spending score < 35. Disengaged customers needing immediate intervention.',       border: 'var(--high)' },
-          { risk: 'Medium Risk', emoji: '🟡', desc: 'Spending score 35–55. Occasional shoppers susceptible to competitor offers.',   border: 'var(--med)'  },
-          { risk: 'Low Risk', emoji: '🟢', desc: 'Spending score > 55. Loyal frequent visitors. Maintain and reward.',               border: 'var(--low)'  },
-        ].map(info => (
-          <div key={info.risk} className="card" style={{ borderLeft: `5px solid ${info.border}` }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: 2, marginBottom: 6, color: 'var(--text)' }}>
-              {info.emoji} {info.risk}
+      <div className="grid-3">
+        {TIERS.map(t => {
+          const r = RISK[t.level]
+          return (
+            <div key={t.level} className="card card-flat kpi" style={{ borderLeftColor: r.color }}>
+              <span className={`badge ${r.badge}`}>{r.label}</span>
+              <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{t.rule}</div>
+              <div className="muted" style={{ marginTop: 2 }}>{t.desc}</div>
             </div>
-            <div style={{ color: 'var(--text2)', fontSize: 12, fontWeight: 600, lineHeight: 1.6 }}>{info.desc}</div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

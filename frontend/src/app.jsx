@@ -8,15 +8,18 @@ import Signup    from './pages/Signup'
 import Trends    from './pages/Trends'
 import { api }   from './api'
 import PixelLogo from './components/PixelLogo'
-import { LogOut, Database, LayoutDashboard, Users, Target, TrendingUp } from 'lucide-react'
+import ThemeToggle from './components/ThemeToggle'
+import { LogOut, Database, LayoutDashboard, Users, Target, TrendingUp, RotateCcw } from 'lucide-react'
 
 const NAV = [
-  { id: 'upload',    label: 'Dataset',   Icon: Database        },
   { id: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard },
-  { id: 'trends',    label: 'Trends',    Icon: TrendingUp      },
   { id: 'customers', label: 'Customers', Icon: Users           },
   { id: 'predict',   label: 'Predict',   Icon: Target          },
+  { id: 'trends',    label: 'Trends',    Icon: TrendingUp      },
+  { id: 'upload',    label: 'Dataset',   Icon: Database        },
 ]
+
+const K_OPTIONS = [3, 4, 5, 6, 7]
 
 export default function App() {
   const [page,          setPage]        = useState('dashboard')
@@ -46,6 +49,8 @@ export default function App() {
       .catch(() => {})
   }, [authenticated])
 
+  useEffect(() => { window.scrollTo(0, 0) }, [page])
+
   const handleDatasetReady = (ds) => {
     if (ds) {
       setDataset(ds)
@@ -54,6 +59,8 @@ export default function App() {
     }
     setPage('dashboard')
   }
+
+  const resetDataset = async () => { await api.resetDataset(); handleDatasetReady(null) }
 
   const logout = () => {
     localStorage.removeItem('token')
@@ -72,90 +79,84 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        {/* Logo — hidden on mobile via CSS */}
         <div className="sidebar-logo">
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 12 }}>
             <PixelLogo size={7} gap={2} />
           </div>
           <h1>CustomerIQ</h1>
           <span>Churn Intelligence</span>
         </div>
 
-        {/* Nav */}
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" aria-label="Main">
           {NAV.map(({ id, label, Icon }) => (
             <button key={id} className={`nav-item ${page === id ? 'active' : ''}`}
+              aria-current={page === id ? 'page' : undefined}
               onClick={() => setPage(id)}>
               <Icon size={isMobile ? 20 : 16} />
               {label}
             </button>
           ))}
 
-          {/* k selector — desktop only */}
+          {isMobile && (
+            <button className="nav-item" onClick={logout}>
+              <LogOut size={20} />
+              Logout
+            </button>
+          )}
+
           {!isMobile && (
-            <div style={{ marginTop: 'auto', paddingTop: 24 }}>
-              <div style={{ padding: '0 12px', marginBottom: 8, fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '1.5px', fontWeight: 800 }}>
-                Clusters (k)
-              </div>
-              <div style={{ padding: '0 12px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {[3,4,5,6,7].map(n => (
-                  <button key={n} className={`k-btn ${k === n ? 'active' : ''}`} onClick={() => setK(n)}>
+            <div className="sidebar-section">
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Clusters (k)</div>
+              <div className="k-group" role="group" aria-label="Number of clusters">
+                {K_OPTIONS.map(n => (
+                  <button key={n} className={`k-btn ${k === n ? 'active' : ''}`}
+                    aria-pressed={k === n} onClick={() => setK(n)}>
                     {n}
                   </button>
                 ))}
               </div>
             </div>
           )}
-
-          {/* Mobile logout button in nav */}
-          {isMobile && (
-            <button className="nav-item" onClick={logout}
-              style={{ color: 'var(--high)', borderTop: '1px solid var(--border)' }}>
-              <LogOut size={20} />
-              Logout
-            </button>
-          )}
         </nav>
 
-        {/* Dataset footer — desktop only */}
         {!isMobile && (
-          <div style={{ padding: '14px 20px', borderTop: '2px solid rgba(255,255,255,0.55)' }}>
-            <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '1.5px', fontWeight: 800, marginBottom: 4 }}>
-              Active Dataset
-            </div>
-            <div style={{ fontSize: 11, color: isDefault ? 'var(--text2)' : 'var(--accent2)', fontWeight: 700, wordBreak: 'break-all' }}>
-              {dataset ? dataset.filename : '—'}
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 700, marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              {dataset ? `${Number(dataset.rows).toLocaleString()} rows` : ''}
-              {isDefault ? ' · default' : ' · uploaded'}
+          <div className="sidebar-footer">
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>Active dataset</div>
+              <div className="dataset-name">{dataset ? dataset.filename : '—'}</div>
+              <div className="dataset-meta" style={{ marginTop: 2 }}>
+                {dataset ? `${Number(dataset.rows).toLocaleString()} rows · ` : ''}
+                {isDefault ? 'default' : 'uploaded'}
+              </div>
             </div>
 
             {!isDefault && (
-              <button className="k-btn" style={{ marginTop: 8, width: '100%', fontSize: 10 }}
-                onClick={async () => { await api.resetDataset(); handleDatasetReady(null) }}>
-                ↩ Use Default
+              <button className="btn btn-sm btn-secondary" style={{ marginTop: 0 }} onClick={resetDataset}>
+                <RotateCcw size={13} /> Use default
               </button>
             )}
 
-            <button onClick={logout} style={{ marginTop: 10, width: '100%', background: 'transparent', border: '2px solid rgba(255,255,255,0.55)', color: 'var(--text2)', padding: '8px 12px', fontSize: 11, fontWeight: 800, fontFamily: 'var(--font-body)', textTransform: 'uppercase', letterSpacing: '1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.12s' }}
-              onMouseEnter={e => { e.currentTarget.style.background='var(--high)'; e.currentTarget.style.borderColor='var(--high)'; e.currentTarget.style.color='#fff'; e.currentTarget.style.transform='translate(-2px,-2px)'; e.currentTarget.style.boxShadow='3px 3px 0px rgba(0,0,0,0.8)' }}
-              onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.borderColor='rgba(255,255,255,0.55)'; e.currentTarget.style.color='var(--text2)'; e.currentTarget.style.transform='none'; e.currentTarget.style.boxShadow='none' }}>
-              <LogOut size={14} /> Logout
-            </button>
+            <div className="sidebar-actions" style={{ marginTop: 4 }}>
+              <ThemeToggle className="btn btn-sm btn-secondary" />
+              <button className="btn btn-sm btn-danger-ghost" style={{ marginTop: 0 }} onClick={logout}>
+                <LogOut size={13} /> Logout
+              </button>
+            </div>
           </div>
         )}
       </aside>
 
       <main className="main">
-        {page === 'upload'    && <Upload    onDatasetReady={handleDatasetReady} currentDataset={isDefault ? null : dataset} />}
-        {page === 'dashboard' && (
-          <Dashboard k={k} setK={setK} isMobile={isMobile} dataset={dataset} isDefault={isDefault}
-            onResetDataset={async () => { await api.resetDataset(); handleDatasetReady(null) }} />
-        )}
-        {page === 'trends'    && <Trends onDatasetReady={handleDatasetReady} />}
-        {page === 'customers' && <Customers k={k} />}
-        {page === 'predict'   && <Predict />}
+        <div className="page">
+          {page === 'upload'    && <Upload    onDatasetReady={handleDatasetReady} onReset={resetDataset} currentDataset={isDefault ? null : dataset} />}
+          {page === 'dashboard' && (
+            <Dashboard k={k} setK={setK} kOptions={K_OPTIONS} isMobile={isMobile} dataset={dataset} isDefault={isDefault}
+              onResetDataset={resetDataset} />
+          )}
+          {page === 'trends'    && <Trends onDatasetReady={handleDatasetReady} />}
+          {page === 'customers' && <Customers k={k} />}
+          {page === 'predict'   && <Predict />}
+        </div>
       </main>
     </div>
   )

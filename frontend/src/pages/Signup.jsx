@@ -1,8 +1,9 @@
 import { useState } from "react"
-import { User, Mail, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react"
+import { User, Mail, Lock, Eye, EyeOff, ShieldCheck, AlertTriangle, ArrowRight } from "lucide-react"
 import axios from "axios"
 import AuthBackground from "./AuthBackground"
 import PixelLogo from "../components/PixelLogo"
+import ThemeToggle from "../components/ThemeToggle"
 
 const BASE = "https://customeriq-backend.onrender.com"
 
@@ -19,7 +20,7 @@ function scorePassword(pw) {
     { level: 1, label: "Weak",    color: "var(--high)" },
     { level: 2, label: "Fair",    color: "var(--med)" },
     { level: 3, label: "Good",    color: "var(--low)" },
-    { level: 4, label: "Strong",  color: "var(--accent2)" },
+    { level: 4, label: "Strong",  color: "var(--low)" },
   ][Math.min(4, s)]
 }
 
@@ -33,7 +34,8 @@ export default function Signup({ switchToLogin }) {
 
   const strength = scorePassword(password)
 
-  const handleSignup = async () => {
+  const handleSignup = async (e) => {
+    e.preventDefault()
     try {
       setLoading(true); setError("")
       await axios.post(`${BASE}/auth/signup`, { username, email, password })
@@ -45,63 +47,30 @@ export default function Signup({ switchToLogin }) {
     }
   }
 
-  const onKey = e => e.key === "Enter" && handleSignup()
-
-  const inputStyle = {
-    background: 'var(--bg)',
-    border: '2px solid rgba(255,255,255,0.55)',
-    padding: '11px 12px 11px 40px',
-    color: 'var(--text)',
-    fontSize: 13,
-    fontWeight: 600,
-    fontFamily: 'var(--font-body)',
-    outline: 'none',
-    width: '100%',
-    transition: 'border-color 0.12s, box-shadow 0.12s, transform 0.12s',
-  }
-
-  const labelStyle = {
-    fontSize: 10,
-    fontWeight: 800,
-    color: 'var(--text2)',
-    textTransform: 'uppercase',
-    letterSpacing: '1px',
-    marginBottom: 6,
-    display: 'block',
-  }
-
-  const onFocus = e => {
-    e.target.style.borderColor   = 'var(--accent)'
-    e.target.style.boxShadow     = '2px 2px 0px var(--accent)'
-    e.target.style.transform     = 'translate(-1px,-1px)'
-  }
-
-  const onBlur = e => {
-    e.target.style.borderColor   = 'rgba(255,255,255,0.55)'
-    e.target.style.boxShadow     = 'none'
-    e.target.style.transform     = 'none'
-  }
-
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", position: "relative" }}>
       <AuthBackground />
 
-      <div style={{ width: "100%", display: "flex", justifyContent: "center", padding: "100px 24px 60px", boxSizing: "border-box", position: "relative", zIndex: 10 }}>
-        <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start", gap: 64, width: "100%", maxWidth: 1040 }}>
+      <div style={{ position: "absolute", top: 20, right: 20, zIndex: 20 }}>
+        <ThemeToggle />
+      </div>
+
+      <div style={{ width: "100%", display: "flex", justifyContent: "center", padding: "88px 20px 60px", position: "relative", zIndex: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 64, width: "100%", maxWidth: 1040 }}>
 
           {/* Left — branding */}
-          <section style={{ flex: "1 1 420px", maxWidth: 500, minWidth: 320 }}>
+          <section style={{ flex: "1 1 420px", maxWidth: 500, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
               <PixelLogo size={10} gap={2.5} />
-              <span style={{ fontFamily: "var(--font-display)", fontWeight: 400, fontSize: 26, textTransform: "uppercase", letterSpacing: 4 }}>CustomerIQ</span>
+              <span style={{ fontFamily: "var(--font-display)", fontSize: 28, textTransform: "uppercase", letterSpacing: 3 }}>CustomerIQ</span>
             </div>
 
-            <h1 style={{ fontFamily: "var(--font-display)", fontSize: 52, fontWeight: 400, lineHeight: 1.05, textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>
+            <h1 className="auth-headline" style={{ fontSize: 56 }}>
               Build smarter<br/>
-              <span style={{ color: "var(--accent2)" }}>growth strategies.</span>
+              <span>growth strategies.</span>
             </h1>
 
-            <p style={{ fontSize: 13, color: "var(--text2)", fontWeight: 600, marginBottom: 24, lineHeight: 1.7 }}>
+            <p className="auth-sub">
               ML-powered segmentation, churn prediction, and lifetime value modeling — all in one unified intelligence platform.
             </p>
 
@@ -117,94 +86,82 @@ export default function Signup({ switchToLogin }) {
 
             <div className="stat-strip">
               <div className="stat-item">
-                <div className="stat-num">98.95<span style={{ color: 'var(--accent)', fontSize: 16, fontFamily: 'var(--font-display)' }}>%</span></div>
+                <div className="stat-num">98.95<span className="stat-suffix">%</span></div>
                 <span className="stat-desc">Model Accuracy</span>
               </div>
               <div className="stat-divider" />
               <div className="stat-item">
-                <div className="stat-num">10K<span style={{ color: 'var(--accent)', fontSize: 16, fontFamily: 'var(--font-display)' }}>+</span></div>
+                <div className="stat-num">10K<span className="stat-suffix">+</span></div>
                 <span className="stat-desc">Data Points</span>
               </div>
             </div>
           </section>
 
           {/* Right — signup card */}
-          <section style={{ flex: "0 1 400px", minWidth: 340 }}>
-            <div className="auth-card" style={{ padding: 36, width: "100%", boxSizing: "border-box" }}>
-              <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontFamily: "var(--font-display)", fontSize: 30, fontWeight: 400, textTransform: "uppercase", letterSpacing: 3 }}>Create Account</h2>
-                <p style={{ fontSize: 11, color: "var(--text2)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>
-                  Start your CustomerIQ journey — it's free
-                </p>
-              </div>
+          <section style={{ flex: "0 1 400px", minWidth: 0, width: "100%", maxWidth: 420 }}>
+            <form className="auth-card" onSubmit={handleSignup}>
+              <h2 className="auth-card-title">Create account</h2>
+              <p className="auth-card-sub">Start your CustomerIQ journey — it's free</p>
 
-              {/* Username */}
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label style={labelStyle}>Username</label>
-                <div style={{ position: "relative" }}>
-                  <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text3)" }}><User size={15} /></span>
-                  <input style={inputStyle} placeholder="ada_lovelace"
-                    value={username} onChange={e => setUsername(e.target.value)}
-                    onKeyDown={onKey} onFocus={onFocus} onBlur={onBlur} />
+              <div className="form-group">
+                <label className="form-label" htmlFor="su-username">Username</label>
+                <div className="input-wrap">
+                  <span className="input-icon"><User size={15} /></span>
+                  <input id="su-username" className="form-input" autoComplete="username" placeholder="ada_lovelace"
+                    value={username} onChange={e => setUsername(e.target.value)} />
                 </div>
               </div>
 
-              {/* Email */}
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label style={labelStyle}>Work Email</label>
-                <div style={{ position: "relative" }}>
-                  <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text3)" }}><Mail size={15} /></span>
-                  <input style={inputStyle} type="email" placeholder="ada@company.com"
-                    value={email} onChange={e => setEmail(e.target.value)}
-                    onKeyDown={onKey} onFocus={onFocus} onBlur={onBlur} />
+              <div className="form-group">
+                <label className="form-label" htmlFor="su-email">Work email</label>
+                <div className="input-wrap">
+                  <span className="input-icon"><Mail size={15} /></span>
+                  <input id="su-email" className="form-input" type="email" autoComplete="email" placeholder="ada@company.com"
+                    value={email} onChange={e => setEmail(e.target.value)} />
                 </div>
               </div>
 
-              {/* Password */}
               <div className="form-group" style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>Password</label>
-                <div style={{ position: "relative" }}>
-                  <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text3)" }}><Lock size={15} /></span>
-                  <input style={inputStyle} type={showPass ? "text" : "password"} placeholder="Min. 8 characters"
-                    value={password} onChange={e => setPassword(e.target.value)}
-                    onKeyDown={onKey} onFocus={onFocus} onBlur={onBlur} />
-                  <button type="button" onClick={() => setShowPass(v => !v)}
-                    style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text3)" }}>
+                <label className="form-label" htmlFor="su-password">Password</label>
+                <div className="input-wrap">
+                  <span className="input-icon"><Lock size={15} /></span>
+                  <input id="su-password" className="form-input has-trailing" type={showPass ? "text" : "password"}
+                    autoComplete="new-password" placeholder="Min. 8 characters"
+                    value={password} onChange={e => setPassword(e.target.value)} />
+                  <button type="button" className="input-trailing" onClick={() => setShowPass(v => !v)}
+                    aria-label={showPass ? "Hide password" : "Show password"}>
                     {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
 
-                {/* Password strength bar */}
                 {password && (
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                    <div style={{ flex: 1, height: 6, background: "var(--bg3)", border: "2px solid rgba(255,255,255,0.55)", position: "relative", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${strength.level * 25}%`, background: strength.color, transition: "width 0.3s ease" }} />
+                  <div className="strength-wrap">
+                    <div className="strength-bar">
+                      <div style={{ width: `${strength.level * 25}%`, background: strength.color }} />
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: strength.color, textTransform: "uppercase", letterSpacing: 1, minWidth: 40 }}>
-                      {strength.label}
-                    </span>
+                    <span className="eyebrow" style={{ color: "var(--text2)", minWidth: 48 }}>{strength.label}</span>
                   </div>
                 )}
               </div>
 
               {error && (
-                <div style={{ color: "var(--high)", fontWeight: 800, fontSize: 11, marginBottom: 14, textTransform: "uppercase", letterSpacing: 1, border: "2px solid var(--high)", padding: "8px 12px" }}>
-                  ⚠ {error}
+                <div className="alert" role="alert" style={{ marginBottom: 14 }}>
+                  <AlertTriangle size={16} /><span>{error}</span>
                 </div>
               )}
 
-              <button className="btn-primary" onClick={handleSignup} disabled={loading}>
-                {loading ? "Creating account…" : "Create Account →"}
+              <button type="submit" className="btn" style={{ marginTop: 0 }} disabled={loading}>
+                {loading ? <><div className="spinner spinner-sm" /> Creating account</> : <>Create account <ArrowRight size={16} /></>}
               </button>
 
-              <p className="auth-switch" style={{ marginTop: 16 }}>
+              <p className="auth-switch">
                 Already have an account?{" "}
                 <button type="button" className="switch-link" onClick={switchToLogin}>Sign in</button>
               </p>
-            </div>
+            </form>
 
-            <p style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14, fontSize: 10, color: "var(--text3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-              <ShieldCheck size={13} style={{ color: "var(--low)" }} />
+            <p className="auth-trust">
+              <ShieldCheck size={14} style={{ color: "var(--low-ink)" }} />
               Protected by industry-standard encryption
             </p>
           </section>

@@ -1,122 +1,163 @@
 import { useEffect, useState, useMemo } from 'react'
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, SearchX } from 'lucide-react'
 import { api } from '../api'
+import { clusterColor, riskOf, errorMessage } from '../theme'
+import { Loading, Alert, EmptyState } from '../components/States'
+
+const PAGE_SIZE = 50
+
+const COLUMNS = [
+  { key: 'id',            label: 'ID' },
+  { key: 'gender',        label: 'Gender' },
+  { key: 'age',           label: 'Age',      num: true },
+  { key: 'annualIncome',  label: 'Income',   num: true },
+  { key: 'spendingScore', label: 'Spending' },
+  { key: 'cluster',       label: 'Cluster' },
+  { key: 'riskLevel',     label: 'Risk' },
+]
+
+const FILTERS = [
+  { label: 'All',    level: null },
+  { label: 'High',   level: 3 },
+  { label: 'Medium', level: 2 },
+  { label: 'Low',    level: 1 },
+]
+
+const compare = (a, b) => {
+  if (typeof a === 'string' || typeof b === 'string') return String(a).localeCompare(String(b), undefined, { numeric: true })
+  return (a ?? 0) - (b ?? 0)
+}
 
 export default function Customers({ k }) {
-  const [customers, setCustomers] = useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [search,    setSearch]    = useState('')
-  const [riskFilter,setRiskFilter]= useState('All')
-  const [sortKey,   setSortKey]   = useState('id')
-  const [sortDir,   setSortDir]   = useState('asc')
+  const [customers,  setCustomers]  = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState('')
+  const [search,     setSearch]     = useState('')
+  const [riskFilter, setRiskFilter] = useState(null)
+  const [sortKey,    setSortKey]    = useState('id')
+  const [sortDir,    setSortDir]    = useState('asc')
+  const [pageIdx,    setPageIdx]    = useState(0)
+  const [reloadKey,  setReloadKey]  = useState(0)
 
   useEffect(() => {
+    let active = true
     setLoading(true)
-    api.customers(k).then(d => setCustomers(d.customers)).finally(() => setLoading(false))
-  }, [k])
+    setError('')
+    api.customers(k)
+      .then(d => { if (active) setCustomers(d.customers) })
+      .catch(e => { if (active) setError(errorMessage(e, 'Could not load customers.')) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [k, reloadKey])
+
+  const riskCounts = useMemo(() => {
+    const counts = { 1: 0, 2: 0, 3: 0 }
+    customers.forEach(c => { counts[c.riskLevel] = (counts[c.riskLevel] || 0) + 1 })
+    return counts
+  }, [customers])
 
   const filtered = useMemo(() => {
-    let data = [...customers]
-    if (riskFilter !== 'All') data = data.filter(c => c.churnRisk === riskFilter)
-    if (search.trim()) {
-      const q = search.toLowerCase()
+    let data = customers
+    if (riskFilter) data = data.filter(c => c.riskLevel === riskFilter)
+    const q = search.trim().toLowerCase()
+    if (q) {
       data = data.filter(c =>
-        String(c.id).includes(q) ||
-        c.gender.toLowerCase().includes(q) ||
-        c.churnRisk.toLowerCase().includes(q)
+        String(c.id).toLowerCase().includes(q) ||
+        String(c.gender).toLowerCase().includes(q) ||
+        String(c.churnRisk).toLowerCase().includes(q) ||
+        `cluster ${c.cluster}` === q
       )
     }
-    data.sort((a, b) => {
-      let av = a[sortKey], bv = b[sortKey]
-      if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase() }
-      return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1)
-    })
-    return data
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...data].sort((a, b) => compare(a[sortKey], b[sortKey]) * dir || compare(a.id, b.id))
   }, [customers, riskFilter, search, sortKey, sortDir])
 
+  useEffect(() => { setPageIdx(0) }, [riskFilter, search, sortKey, sortDir, k])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const page = Math.min(pageIdx, pageCount - 1)
+  const rows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
   const sort = (key) => {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortKey(key); setSortDir('asc') }
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir(key === 'riskLevel' ? 'desc' : 'asc') }
   }
 
-  const SortIcon = ({ k: key }) => {
-    if (sortKey !== key) return <span style={{ color: 'var(--text3)', marginLeft: 4 }}>⇅</span>
-    return <span style={{ color: 'var(--accent2)', marginLeft: 4 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
-  }
-
-  if (loading) return <div className="loading"><div className="spinner" /><span>Loading customers...</span></div>
-
-  const riskCounts = {
-    'High Risk':   customers.filter(c => c.riskLevel === 3).length,
-    'Medium Risk': customers.filter(c => c.riskLevel === 2).length,
-    'Low Risk':    customers.filter(c => c.riskLevel === 1).length,
-  }
-
-  const COLORS = ['#7c6ff7','#10b981','#f59e0b','#ef4444','#06b6d4']
+  if (loading && !customers.length) return <Loading label="Loading customers..." />
 
   return (
     <div className="fade-in">
       <div className="page-header">
-        <h2>Customer Profiles</h2>
-        <p>All {customers.length.toLocaleString()} customers with cluster assignments and churn risk</p>
+        <h2>Customers</h2>
+        <p>{customers.length.toLocaleString()} customers with their cluster and churn risk</p>
       </div>
+
+      {error && <Alert style={{ marginBottom: 16 }} onRetry={() => setReloadKey(n => n + 1)}>{error}</Alert>}
 
       <div className="card">
         <div className="table-toolbar">
-          <div className="filter-btns">
-            {['All', 'High Risk', 'Medium Risk', 'Low Risk'].map(f => (
-              <button key={f} className={`filter-btn ${riskFilter === f ? 'active' : ''}`}
-                onClick={() => setRiskFilter(f)}>
-                {f} ({f !== 'All' ? riskCounts[f] || 0 : customers.length})
+          <div className="filter-btns" role="group" aria-label="Filter by risk">
+            {FILTERS.map(f => (
+              <button key={f.label} className={`filter-btn ${riskFilter === f.level ? 'active' : ''}`}
+                aria-pressed={riskFilter === f.level}
+                onClick={() => setRiskFilter(f.level)}>
+                {f.level && <span className="swatch" style={{ background: riskOf(f.level).color }} />}
+                {f.label}
+                <span className="count">{f.level ? riskCounts[f.level] || 0 : customers.length}</span>
               </button>
             ))}
           </div>
-          <input className="search-input" placeholder="Search ID, gender, risk..."
-            value={search} onChange={e => setSearch(e.target.value)} />
+          <label className="search-wrap">
+            <Search size={15} />
+            <input className="search-input" type="search" placeholder="Search ID, gender or risk"
+              aria-label="Search customers"
+              value={search} onChange={e => setSearch(e.target.value)} />
+          </label>
         </div>
 
-        <div className="table-wrap" style={{ border: '2px solid var(--border-strong)' }}>
+        <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                {[['id','ID'],['gender','Gender'],['age','Age'],['annualIncome','Income'],['spendingScore','Spending'],['cluster','Cluster'],['churnRisk','Risk']].map(([key, label]) => (
-                  <th key={key} style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => sort(key)}>
-                    {label}<SortIcon k={key} />
-                  </th>
-                ))}
+                {COLUMNS.map(({ key, label, num }) => {
+                  const sorted = sortKey === key
+                  const Icon = !sorted ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown
+                  return (
+                    <th key={key} className={num ? 'num' : undefined}
+                      aria-sort={sorted ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                      <button className={`th-sort ${sorted ? 'is-sorted' : ''}`} onClick={() => sort(key)}>
+                        {label}<Icon size={12} />
+                      </button>
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
-              {filtered.map(c => {
-                const bClass = c.riskLevel === 3 ? 'badge-high' : c.riskLevel === 2 ? 'badge-med' : 'badge-low'
-                const clrColor = COLORS[c.cluster % COLORS.length]
+              {rows.map(c => {
+                const risk  = riskOf(c.riskLevel)
+                const color = clusterColor(c.cluster)
                 return (
                   <tr key={c.id}>
+                    <td style={{ fontWeight: 700 }}>#{c.id}</td>
+                    <td>{c.gender}</td>
+                    <td className="num">{c.age}</td>
+                    <td className="num">${c.annualIncome}k</td>
                     <td>
-                      <span style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--text)', letterSpacing: 1 }}>
-                        #{c.id}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className="meter" aria-hidden="true">
+                          <div style={{ width: `${Math.min(100, c.spendingScore)}%`, background: 'var(--text2)' }} />
+                        </div>
+                        <span style={{ fontWeight: 700, minWidth: 24 }}>{c.spendingScore}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 700 }}>
+                        <span className="swatch" style={{ background: color, borderRadius: '50%' }} />
+                        {c.cluster}
                       </span>
                     </td>
-                    <td style={{ color: 'var(--text)', fontWeight: 700 }}>{c.gender}</td>
-                    <td style={{ color: 'var(--text)', fontWeight: 700 }}>{c.age}</td>
-                    <td style={{ color: 'var(--text)', fontWeight: 700 }}>${c.annualIncome}k</td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 72, height: 10, background: 'var(--bg)', border: '2px solid var(--border-strong)', position: 'relative', flexShrink: 0 }}>
-                          <div style={{
-                            width: `${c.spendingScore}%`, height: '100%',
-                            background: c.riskLevel === 3 ? 'var(--high)' : c.riskLevel === 2 ? 'var(--med)' : 'var(--low)'
-                          }} />
-                        </div>
-                        <span style={{ fontWeight: 800, color: 'var(--text)', fontSize: 13 }}>{c.spendingScore}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 10, height: 10, background: clrColor, border: '2px solid rgba(0,0,0,0.5)' }} />
-                        <span style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: clrColor, letterSpacing: 1 }}>{c.cluster}</span>
-                      </div>
-                    </td>
-                    <td><span className={`badge ${bClass}`}>{c.riskBadge} {c.churnRisk}</span></td>
+                    <td><span className={`badge ${risk.badge}`}>{c.churnRisk}</span></td>
                   </tr>
                 )
               })}
@@ -124,14 +165,29 @@ export default function Customers({ k }) {
           </table>
 
           {filtered.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text3)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 2 }}>
-              No data points matched.
-            </div>
+            <EmptyState icon={SearchX} title="No matches">
+              No customers match the current filter and search. Try clearing one of them.
+            </EmptyState>
           )}
         </div>
 
-        <div style={{ marginTop: 10, color: 'var(--text3)', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1 }}>
-          Showing {filtered.length} of {customers.length} records
+        <div className="table-foot">
+          <span className="pager-info">
+            {filtered.length === 0
+              ? 'No records'
+              : `Showing ${(page * PAGE_SIZE + 1).toLocaleString()}–${Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of ${filtered.length.toLocaleString()}`}
+          </span>
+          {pageCount > 1 && (
+            <div className="pager">
+              <button className="k-btn" onClick={() => setPageIdx(page - 1)} disabled={page === 0} aria-label="Previous page">
+                <ChevronLeft size={14} />
+              </button>
+              <span className="pager-info">Page {page + 1} of {pageCount}</span>
+              <button className="k-btn" onClick={() => setPageIdx(page + 1)} disabled={page >= pageCount - 1} aria-label="Next page">
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
