@@ -2,7 +2,7 @@
 
 A full-stack Machine Learning web application that identifies at-risk customers using K-Means Clustering and Random Forest / XGBoost Classification, segments them into behavioural groups, and generates AI-powered personalised retention strategies via Groq LLM — all through an interactive analytics dashboard.
 
-> Built with FastAPI, React, MongoDB Atlas, and Groq (Llama 3.3 70B). Deployed on Render.
+> Built with FastAPI, React, MongoDB Atlas, and Groq (GPT-OSS 120B). Deployed on Render.
 
 ---
 
@@ -10,7 +10,8 @@ A full-stack Machine Learning web application that identifies at-risk customers 
 
 ### Customer Segmentation
 - K-Means Clustering (k-means++ initialisation)
-- Elbow Method for optimal k selection
+- Automatic k selection — the k in 3–7 with the highest Silhouette Score is suggested and used by default
+- Elbow Method chart (WCSS vs k) for visual confirmation
 - Silhouette Score cluster quality evaluation
 - Cluster-wise customer analysis
 - Risk categorisation — High 🔴 / Medium 🟡 / Low 🟢
@@ -19,26 +20,32 @@ A full-stack Machine Learning web application that identifies at-risk customers 
 ### Churn Risk Classification
 - **Random Forest Classifier** — interpretable feature importances, robust on tabular data
 - **XGBoost Classifier** — gradient boosting with regularisation, benchmarked against Random Forest
+- Both models trained on the same split; the one with the higher weighted F1 is used automatically
 - Confidence score per prediction
 - Risk-level classification with per-cluster stats
 
 ### AI Retention Recommendations
-- On-demand LLM-generated retention strategy per customer (Groq — Llama 3.3 70B)
+- On-demand LLM-generated retention strategy per customer (Groq — `openai/gpt-oss-120b`)
 - Reasons over the full behavioural profile (age, income, spending score, visit frequency, satisfaction score, complaints, loyalty points) instead of returning a generic templated offer
 - Separate opt-in `/recommend` endpoint so the core prediction stays fast
-- Falls back gracefully to a static recommendation if the Groq call is unavailable
+- A static per-tier recommendation is always shown, so the page stays useful if the Groq call fails
 
 ### Dataset Upload
 - Upload any custom CSV dataset
 - Automatic column mapping with smart suggestions
 - 5-row dataset preview before confirming
+- Automatic cleaning — duplicates removed, rows missing income/spending dropped, other numeric gaps median-filled, Gender spellings normalised
 - Dynamic clustering and classification on uploaded data
+- Per-account upload history — switch back to any earlier upload
 - Reset to default dataset with one click
+
+### Trends & Reports
+- Trends page comparing risk mix, average spending and income across uploads
+- Downloadable PDF report — overview, model comparison, cluster summary, actions, high-risk customers
 
 ### Dashboard Analytics
 - KPI cards — High / Medium / Low risk counts + Silhouette Score
-- Random Forest / XGBoost model metrics (Accuracy, Precision, Recall, F1)
-- Feature importance breakdown
+- Random Forest vs XGBoost metrics side by side (Accuracy, Precision, Recall, F1)
 - Income vs Spending Score scatter plot (colored by cluster)
 - Elbow curve visualisation (WCSS vs k)
 - Full customer table with filter, sort, and search
@@ -67,6 +74,7 @@ A full-stack Machine Learning web application that identifies at-risk customers 
 - Pandas, NumPy
 - Scikit-learn (KMeans, StandardScaler, RandomForestClassifier)
 - XGBoost
+- ReportLab (PDF reports)
 - python-jose (JWT), passlib + bcrypt (auth)
 - PyMongo
 
@@ -79,10 +87,10 @@ A full-stack Machine Learning web application that identifies at-risk customers 
 - 80/20 train-test split with stratification
 
 ### Generative AI
-- Groq API — Llama 3.3 70B for personalised retention recommendation generation
+- Groq API — `openai/gpt-oss-120b` for personalised retention recommendation generation
 
 ### Database
-- MongoDB Atlas — user authentication collection
+- MongoDB Atlas — user accounts and uploaded datasets
 
 ### Deployment
 - Frontend: Render (Static Site)
@@ -100,10 +108,12 @@ CustomerIQ/
 │   ├── main.py              # FastAPI app, all routes
 │   ├── model.py             # K-Means + RF / XGBoost pipeline
 │   ├── ai_recommend.py      # Groq LLM retention recommendation
-│   ├── data_loader.py       # CSV loading, upload store, preprocessing
+│   ├── data_loader.py       # CSV loading, cleaning, upload store, preprocessing
+│   ├── report.py            # PDF report generation
 │   ├── auth.py              # JWT creation/verification, bcrypt hashing
 │   ├── database.py          # MongoDB Atlas connection
 │   ├── Mall_Customers.csv   # Default dataset (200 rows)
+│   ├── mall_customer_dataset.csv  # Extended behavioural dataset (10,100 rows)
 │   ├── requirements.txt
 │   └── runtime.txt
 │
@@ -122,6 +132,7 @@ CustomerIQ/
     │       ├── Dashboard.jsx
     │       ├── Customers.jsx
     │       ├── Predict.jsx
+    │       ├── Trends.jsx
     │       └── Upload.jsx
     ├── package.json
     └── vite.config.js
@@ -135,13 +146,13 @@ CustomerIQ/
 
 Features used: `AnnualIncome`, `SpendingScore` only
 
-Age and Gender deliberately excluded — including them drops the Silhouette Score from ~0.485 to ~0.32, confirmed by XGBoost and Random Forest feature importances showing Age at <1% contribution.
+Age and Gender are deliberately excluded; Random Forest feature importance puts Age under 1%.
 
 ```python
-KMeans(n_clusters=5, init='k-means++', n_init=10, random_state=42)
+KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=42)
 ```
 
-Optimal k selected via Elbow Method (WCSS vs k=1–10).
+k is chosen automatically: k = 3–7 are fitted and the one with the highest Silhouette Score is suggested (k = 5 on the default dataset). The user can override it; the dashboard, customer table, predictions and PDF report all use the selected k. On datasets over 3,000 rows the Silhouette Score is estimated on a fixed 3,000-row sample.
 
 ### Stage 2 — Classification (Supervised)
 
@@ -160,22 +171,30 @@ Two models evaluated:
 RandomForestClassifier(n_estimators=100, random_state=42)
 
 # Option B
-XGBClassifier(n_estimators=100, random_state=42, eval_metric='mlogloss')
+XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.1,
+              eval_metric='mlogloss', random_state=42)
 ```
 
-Random Forest provides interpretable feature importances. XGBoost offers gradient boosting with regularisation for improved generalisation. Both are evaluated on the same 80/20 stratified train-test split.
+Random Forest provides interpretable feature importances. XGBoost offers gradient boosting with regularisation for improved generalisation. Both are evaluated on the same 80/20 stratified train-test split, and the one with the higher weighted F1 (ties broken by accuracy) serves predictions.
+
+| Model | Accuracy | Precision | Recall | F1 |
+|---|---|---|---|---|
+| Random Forest | 98.95% | 98.95% | 98.95% | 98.95% |
+| XGBoost | 98.90% | 98.90% | 98.90% | 98.89% |
+
+*On the cleaned 10,100-row behavioural dataset (9,504 rows after cleaning). Its `ChurnRisk` labels are rule-generated, so these scores show the model recovers those rules rather than predicting real churn.*
 
 ### Stage 3 — AI Recommendation (Generative AI)
 
-Customer profile + predicted risk tier sent to Groq (Llama 3.3 70B) → 2–3 sentence personalised retention strategy referencing the customer's specific numbers.
+Customer profile + predicted risk tier sent to Groq (`openai/gpt-oss-120b`) → 2–3 sentence personalised retention strategy referencing the customer's specific numbers.
 
 ### Risk Tiers
 
 | Tier | Avg Cluster Spending | Action |
 |---|---|---|
 | 🔴 High Risk | < 35 | Immediate — discount, loyalty invite |
-| 🟡 Medium Risk | 35–55 | Monitor — seasonal offer, membership upgrade |
-| 🟢 Low Risk | > 55 | Maintain — VIP events, exclusive access |
+| 🟡 Medium Risk | 35–59 | Monitor — seasonal offer, membership upgrade |
+| 🟢 Low Risk | ≥ 60 | Maintain — VIP events, exclusive access |
 
 ---
 
@@ -199,16 +218,21 @@ Base URL: `https://customeriq-backend.onrender.com`
 | POST | `/upload/confirm` | ✓ | Step 2: Confirm column mapping |
 | GET | `/dataset/info` | ✓ | Active dataset source and row count |
 | DELETE | `/dataset` | ✓ | Reset to default dataset |
+| GET | `/uploads` | ✓ | This account's upload history |
+| POST | `/uploads/{id}/activate` | ✓ | Switch to an earlier upload |
+| GET | `/trends` | ✓ | Risk mix and averages across uploads |
 
 ### Clustering & Analysis
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
+| GET | `/best-k` | ✓ | Suggested k and Silhouette Score for k = 3–7 |
 | GET | `/cluster?k=5` | ✓ | Run K-Means, return scatter data + labels |
 | GET | `/summary?k=5` | ✓ | Cluster stats + risk breakdown |
 | GET | `/customers?k=5` | ✓ | All customers with risk labels |
 | GET | `/elbow?max_k=10` | ✓ | WCSS values for elbow chart |
-| GET | `/metrics` | ✓ | RF / XGBoost accuracy, precision, recall, F1, feature importances |
+| GET | `/model-comparison` | ✓ | RF vs XGBoost accuracy, precision, recall, F1 and the selected model |
+| GET | `/report?k=5` | ✓ | Download the PDF report |
 
 ### Prediction & AI
 
@@ -227,9 +251,12 @@ Base URL: `https://customeriq-backend.onrender.com`
   "visitFrequency": 10,
   "satisfactionScore": 8,
   "complaintsCount": 0,
-  "loyaltyPoints": 4500
+  "loyaltyPoints": 4500,
+  "k": 5
 }
 ```
+
+`k` is optional on `/predict`, `/cluster`, `/summary`, `/customers` and `/report`; when omitted the suggested k is used.
 
 Swagger docs: `https://customeriq-backend.onrender.com/docs`
 
@@ -309,11 +336,10 @@ npm run dev
 
 ## Future Improvements
 
-- XGBoost final model selection based on cross-validated F1 score
+- Model selection with cross-validated F1 instead of a single split
+- Retrain on real transactional churn data (e.g. dunnhumby "The Complete Journey")
 - SHAP values for per-prediction explainability
-- Time-series trend features — spending score trajectory over months
 - Feedback loop — track whether flagged customers were retained, retrain on outcomes
-- PDF report generation and download
 - Automated email/SMS delivery of AI recommendations via SendGrid
 - Real-time customer risk monitoring with alerts
 - Multi-user workspace with role-based access (Admin / Analyst)
@@ -328,7 +354,7 @@ This project demonstrates:
 - Unsupervised Learning — K-Means Clustering, Elbow Method, Silhouette Score
 - Supervised Learning — Random Forest and XGBoost classification, model benchmarking
 - Feature Engineering and selection (validated via feature importances)
-- Generative AI API Integration — Groq (Llama 3.3 70B)
+- Generative AI API Integration — Groq (`openai/gpt-oss-120b`)
 - FastAPI backend with JWT authentication
 - React frontend with custom dark/light theming
 - MongoDB Atlas integration
