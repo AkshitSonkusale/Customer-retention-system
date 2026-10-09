@@ -630,7 +630,11 @@ tbody tr:hover td { background: var(--accent-wash); }
   white-space: nowrap;
 }
 
-.k-btn { min-width: 36px; justify-content: center; }
+.k-btn { min-width: 36px; justify-content: center; position: relative; }
+.k-btn.suggested::after {
+  content: ''; position: absolute; top: 3px; right: 3px;
+  width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+}
 .filter-btn { text-transform: uppercase; font-size: 11px; }
 
 .k-btn:hover:not(:disabled), .filter-btn:hover:not(:disabled) {

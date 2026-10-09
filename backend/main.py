@@ -3,7 +3,7 @@ import pandas as pd
 from bson import ObjectId
 from fastapi import FastAPI, Depends, Query, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from data_loader import (
     CSV_PATH,
@@ -14,7 +14,7 @@ from data_loader import (
     list_uploads,
     store_upload,
 )
-from model import compute_elbow, get_model_comparison, get_trends, predict_customer, run_clustering
+from model import best_k, compute_elbow, get_model_comparison, get_trends, predict_customer, run_clustering
 from report import build_report_pdf
 from database import db, users_collection
 from auth import (
@@ -40,6 +40,10 @@ _pending: dict = {}
 
 def _email(user) -> str:
     return user["email"].lower().strip()
+
+
+def _k(email, k):
+    return k if k is not None else best_k(email)["bestK"]
 
 
 @app.get("/")
@@ -186,10 +190,12 @@ def confirm_upload(body: ConfirmBody, user=Depends(get_current_user)):
         if body.col_map[r] not in df.columns:
             raise HTTPException(400, f"Column '{body.col_map[r]}' not in CSV.")
 
-    for role in required:
-        col = body.col_map[role]
+    # Missing ages are filled with the median later (data_loader.clean);
+    # only income and spending are needed to place a customer in a cluster.
+    clustering = [body.col_map["income"], body.col_map["spending"]]
+    for col in clustering:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.dropna(subset=[body.col_map[r] for r in required])
+    df = df.dropna(subset=clustering).drop_duplicates()
 
     store_upload(_email(user), df, body.col_map, filename)
     del _pending[body.token]
@@ -246,25 +252,30 @@ def trends(user=Depends(get_current_user)):
     return {"points": get_trends(_email(user))}
 
 
+@app.get("/best-k")
+def get_best_k(user=Depends(get_current_user)):
+    return best_k(_email(user))
+
+
 @app.get("/elbow")
 def elbow_data(max_k: int = Query(default=10, ge=2, le=15), user=Depends(get_current_user)):
     return {"data": compute_elbow(_email(user), max_k)}
 
 
 @app.get("/cluster")
-def cluster_data(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
-    return run_clustering(_email(user), k)
+def cluster_data(k: int | None = Query(default=None, ge=2, le=10), user=Depends(get_current_user)):
+    return run_clustering(_email(user), _k(_email(user), k))
 
 
 @app.get("/customers")
-def get_customers(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
-    result = run_clustering(_email(user), k)
+def get_customers(k: int | None = Query(default=None, ge=2, le=10), user=Depends(get_current_user)):
+    result = run_clustering(_email(user), _k(_email(user), k))
     return {"total": result["totalCustomers"], "customers": result["customers"]}
 
 
 @app.get("/summary")
-def get_summary(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
-    result = run_clustering(_email(user), k)
+def get_summary(k: int | None = Query(default=None, ge=2, le=10), user=Depends(get_current_user)):
+    result = run_clustering(_email(user), _k(_email(user), k))
     return {
         "k":               result["k"],
         "silhouetteScore": result["silhouetteScore"],
@@ -287,6 +298,7 @@ class PredictRequest(BaseModel):
     satisfactionScore: float = 5
     complaintsCount:   float = 0
     loyaltyPoints:     float = 0
+    k:                 int | None = Field(default=None, ge=2, le=10)
 
 
 @app.post("/predict")
@@ -301,6 +313,7 @@ def predict(req: PredictRequest, user=Depends(get_current_user)):
         req.satisfactionScore,
         req.complaintsCount,
         req.loyaltyPoints,
+        _k(_email(user), req.k),
     )
 
 
@@ -310,7 +323,8 @@ def model_comparison(user=Depends(get_current_user)):
 
 
 @app.get("/report")
-def report(k: int = Query(default=5, ge=2, le=10), user=Depends(get_current_user)):
+def report(k: int | None = Query(default=None, ge=2, le=10), user=Depends(get_current_user)):
+    k = _k(_email(user), k)
     pdf = build_report_pdf(_email(user), k)
     return Response(
         content=pdf,

@@ -34,7 +34,7 @@ const EMPTY = {
   visitFrequency: '', satisfactionScore: '', complaintsCount: '', loyaltyPoints: '',
 }
 
-export default function Predict() {
+export default function Predict({ k }) {
   const [form,    setForm]    = useState(EMPTY)
   const [result,  setResult]  = useState(null)
   const [loading, setLoading] = useState(false)
@@ -72,7 +72,7 @@ export default function Predict() {
     setError(''); setLoading(true)
     setAiRec(''); setAiError('')
     try {
-      setResult(await api.predict(payload()))
+      setResult(await api.predict(payload(), k))
     } catch {
       setError('Could not reach the prediction service. Please try again.')
     } finally {
@@ -168,7 +168,7 @@ export default function Predict() {
 
               <div className="result-metrics">
                 <div className="result-metric">
-                  <div className="eyebrow">Cluster</div>
+                  <div className="eyebrow">Cluster (k = {result.k})</div>
                   <div className="result-metric-val">{result.cluster}</div>
                 </div>
                 <div className="result-metric">

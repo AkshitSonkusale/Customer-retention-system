@@ -32,7 +32,7 @@ function ScatterTip({ active, payload }) {
   )
 }
 
-export default function Dashboard({ k, setK, kOptions, isMobile, dataset, isDefault, onResetDataset }) {
+export default function Dashboard({ k, setK, bestK, kOptions, isMobile, dataset, isDefault, onResetDataset }) {
   const [summary,     setSummary]     = useState(null)
   const [scatter,     setScatter]     = useState([])
   const [elbow,       setElbow]       = useState([])
@@ -122,7 +122,7 @@ export default function Dashboard({ k, setK, kOptions, isMobile, dataset, isDefa
       <div className="page-header page-header-row">
         <div>
           <h2>Churn Overview</h2>
-          <p>K-Means with k={k} · {totalCustomers.toLocaleString()} customers analysed</p>
+          <p>K-Means with k={k}{k === bestK ? ' (suggested)' : ''} · {totalCustomers.toLocaleString()} customers analysed</p>
         </div>
         <button className="btn btn-auto" onClick={downloadReport} disabled={downloading}>
           {downloading ? <><div className="spinner spinner-sm" /> Preparing PDF</> : <><FileDown size={16} /> Download report</>}
@@ -141,7 +141,8 @@ export default function Dashboard({ k, setK, kOptions, isMobile, dataset, isDefa
           <div className="eyebrow" style={{ marginBottom: 8 }}>Clusters (k)</div>
           <div className="k-group" role="group" aria-label="Number of clusters">
             {kOptions.map(n => (
-              <button key={n} className={`k-btn ${k === n ? 'active' : ''}`} aria-pressed={k === n}
+              <button key={n} className={`k-btn ${k === n ? 'active' : ''} ${bestK === n ? 'suggested' : ''}`} aria-pressed={k === n}
+                title={bestK === n ? 'Suggested: highest silhouette score' : undefined}
                 style={{ padding: '10px 16px', fontSize: 14 }} onClick={() => setK(n)}>{n}</button>
             ))}
           </div>

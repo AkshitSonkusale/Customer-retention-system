@@ -37,6 +37,10 @@ RISK_RECOMMENDATIONS = {
     "Low Risk":    "Maintain engagement and reward loyalty.",
 }
 
+K_RANGE = range(3, 8)
+# Silhouette is O(n^2); above this many rows it is estimated on a fixed sample.
+SILHOUETTE_SAMPLE = 3000
+
 # Per-account state, rebuilt whenever that account's active upload changes.
 _states: dict = {}
 
@@ -52,6 +56,7 @@ def _state(email):
             "models":        {},
             "comparison":    None,
             "label_encoder": None,
+            "best_k":        None,
         }
         _states[email] = st
     return st
@@ -70,6 +75,25 @@ def compute_elbow(email, max_k: int = 10):
     return [{"k": i + 1, "wcss": w} for i, w in enumerate(wcss)]
 
 
+def _silhouette(scaled, labels):
+    size = SILHOUETTE_SAMPLE if len(scaled) > SILHOUETTE_SAMPLE else None
+    return round(float(silhouette_score(scaled, labels, sample_size=size, random_state=42)), 4)
+
+
+def best_k(email):
+    """The k in K_RANGE with the highest silhouette score for the active dataset."""
+    st = _state(email)
+    if st["best_k"] is None:
+        df = load_data(email)
+        _, scaled, _ = preprocess(df)
+        scores = {}
+        for k in K_RANGE:
+            labels = KMeans(n_clusters=k, init="k-means++", random_state=42, n_init=10).fit_predict(scaled)
+            scores[k] = _silhouette(scaled, labels)
+        st["best_k"] = {"bestK": max(scores, key=scores.get), "scores": scores}
+    return st["best_k"]
+
+
 def run_clustering(email, k: int = 5):
     st = _state(email)
     cache_key = f"cluster_{k}"
@@ -85,7 +109,7 @@ def run_clustering(email, k: int = 5):
 
     st["fitted_km"][k] = (km, scaler)
 
-    sil = round(silhouette_score(scaled, labels), 4) if k > 1 else 0.0
+    sil = _silhouette(scaled, labels) if k > 1 else 0.0
 
     cluster_stats = {}
     for c in range(k):
@@ -174,6 +198,7 @@ def train_churn_models(email):
         st["comparison"] = {"available": False, "missing": missing}
         return
 
+    df = df.dropna(subset=["ChurnRisk"])
     le = LabelEncoder()
     y = le.fit_transform(df["ChurnRisk"])
     X = df[FEATURE_COLS]
@@ -236,19 +261,11 @@ def predict_customer(
     satisfaction_score: float = 5,
     complaints_count: float = 0,
     loyalty_points: float = 0,
+    k: int = 5,
 ):
     # ── Step 1: cluster-based segment risk (always available) ────────────────
-    result = run_clustering(email, 5)
-    st = _state(email)
-
-    if 5 in st["fitted_km"]:
-        km, scaler = st["fitted_km"][5]
-    else:
-        df = load_data(email)
-        _, scaled_all, scaler = preprocess(df)
-        km = KMeans(n_clusters=5, init="k-means++", random_state=42, n_init=10)
-        km.fit(scaled_all)
-        st["fitted_km"][5] = (km, scaler)
+    result = run_clustering(email, k)
+    km, scaler = _state(email)["fitted_km"][k]
 
     raw = np.array([[income, spending]], dtype=float)
     scaled_input = scaler.transform(raw)
@@ -308,6 +325,7 @@ def predict_customer(
 
     return {
         "cluster":            cluster,
+        "k":                  k,
         "segmentRisk":        segment_risk["risk"],
         "predictedChurnRisk": churn_prediction,
         "confidence":         confidence,

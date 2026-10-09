@@ -117,7 +117,34 @@ def standardize(df: pd.DataFrame, cm: dict) -> pd.DataFrame:
     if "Age" not in df.columns:
         # Use a neutral default (median-like) so cluster stats don't crash
         df["Age"] = 30
-    return df
+    return clean(df)
+
+
+NUMERIC_COLS = [
+    "Age", "AnnualIncome", "SpendingScore",
+    "VisitFrequency", "SatisfactionScore", "ComplaintsCount", "LoyaltyPoints",
+]
+_GENDER = {"m": "Male", "male": "Male", "f": "Female", "female": "Female"}
+
+
+def clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicates, normalise Gender, and handle missing numeric values.
+
+    Rows missing income or spending are dropped, because those two columns
+    place a customer in a cluster. Other numeric gaps are filled with the
+    column median.
+    """
+    df = df.drop_duplicates().copy()
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["AnnualIncome", "SpendingScore"])
+    for col in NUMERIC_COLS:
+        if col in df.columns and df[col].isna().any():
+            df[col] = df[col].fillna(df[col].median())
+    gender = df["Gender"].astype("string").str.strip()
+    df["Gender"] = gender.str.lower().map(_GENDER).fillna(gender.str.title()).fillna("Unknown")
+    return df.reset_index(drop=True)
 
 
 def load_data(email) -> pd.DataFrame:

@@ -23,7 +23,8 @@ const K_OPTIONS = [3, 4, 5, 6, 7]
 
 export default function App() {
   const [page,          setPage]        = useState('dashboard')
-  const [k,             setK]           = useState(5)
+  const [k,             setK]           = useState(null)
+  const [bestK,         setBestK]       = useState(null)
   const [dataset,       setDataset]     = useState(null)
   const [authenticated, setAuth]        = useState(!!localStorage.getItem('token'))
   const [showSignup,    setShowSignup]  = useState(false)
@@ -48,6 +49,14 @@ export default function App() {
       })
       .catch(() => {})
   }, [authenticated])
+
+  // Re-pick the suggested k whenever the active dataset changes.
+  useEffect(() => {
+    if (!dataset) return
+    api.bestK()
+      .then(r => { setBestK(r.bestK); setK(r.bestK) })
+      .catch(() => setK(k => k ?? 5))
+  }, [dataset])
 
   useEffect(() => { window.scrollTo(0, 0) }, [page])
 
@@ -107,10 +116,12 @@ export default function App() {
           {!isMobile && (
             <div className="sidebar-section">
               <div className="eyebrow" style={{ marginBottom: 8 }}>Clusters (k)</div>
+              {bestK && <div className="dataset-meta" style={{ marginBottom: 8 }}>Suggested: {bestK} (best silhouette)</div>}
               <div className="k-group" role="group" aria-label="Number of clusters">
                 {K_OPTIONS.map(n => (
-                  <button key={n} className={`k-btn ${k === n ? 'active' : ''}`}
-                    aria-pressed={k === n} onClick={() => setK(n)}>
+                  <button key={n} className={`k-btn ${k === n ? 'active' : ''} ${bestK === n ? 'suggested' : ''}`}
+                    aria-pressed={k === n} onClick={() => setK(n)}
+                    title={bestK === n ? 'Suggested: highest silhouette score' : undefined}>
                     {n}
                   </button>
                 ))}
@@ -149,13 +160,13 @@ export default function App() {
       <main className="main">
         <div className="page">
           {page === 'upload'    && <Upload    onDatasetReady={handleDatasetReady} onReset={resetDataset} currentDataset={isDefault ? null : dataset} />}
-          {page === 'dashboard' && (
-            <Dashboard k={k} setK={setK} kOptions={K_OPTIONS} isMobile={isMobile} dataset={dataset} isDefault={isDefault}
+          {page === 'dashboard' && k && (
+            <Dashboard k={k} setK={setK} bestK={bestK} kOptions={K_OPTIONS} isMobile={isMobile} dataset={dataset} isDefault={isDefault}
               onResetDataset={resetDataset} />
           )}
           {page === 'trends'    && <Trends onDatasetReady={handleDatasetReady} />}
-          {page === 'customers' && <Customers k={k} />}
-          {page === 'predict'   && <Predict />}
+          {page === 'customers' && k && <Customers k={k} />}
+          {page === 'predict'   && k && <Predict k={k} />}
         </div>
       </main>
     </div>
