@@ -190,6 +190,8 @@ Customer profile + predicted risk tier sent to Groq (`openai/gpt-oss-120b`) → 
 
 ### Risk Tiers
 
+When the dataset has `ChurnRisk` labels, each customer's risk is the trained model's prediction and each cluster shows its most common risk. The spending-score rule below is used only for datasets without labels (such as the default 200-row file).
+
 | Tier | Avg Cluster Spending | Action |
 |---|---|---|
 | 🔴 High Risk | < 35 | Immediate — discount, loyalty invite |

@@ -210,6 +210,9 @@ export default function Predict({ k }) {
       </div>
 
       {/* Risk tier legend */}
+      <p className="muted" style={{ margin: 0 }}>
+        These spending-score rules apply when the dataset has no ChurnRisk labels. With labels, risk comes from the trained model.
+      </p>
       <div className="grid-3">
         {TIERS.map(t => {
           const r = RISK[t.level]

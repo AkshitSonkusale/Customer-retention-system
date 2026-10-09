@@ -1,4 +1,7 @@
+from collections import Counter
+
 import numpy as np
+import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import silhouette_score
@@ -14,6 +17,7 @@ from xgboost import XGBClassifier
 
 from data_loader import (
     RISK_HIGH_BELOW,
+    RISK_INFO,
     RISK_MEDIUM_BELOW,
     active_upload_id,
     assign_churn_risk,
@@ -21,6 +25,7 @@ from data_loader import (
     list_uploads,
     load_data,
     preprocess,
+    risk_label,
     standardize,
 )
 
@@ -121,10 +126,26 @@ def run_clustering(email, k: int = 5):
             "count":        len(subset),
         }
 
+    # With labels, each customer's risk is the trained model's prediction and a
+    # cluster shows its most common risk. Without labels, every customer takes
+    # the spending-score risk of their cluster.
+    comparison = get_model_comparison(email)
+    if comparison["available"]:
+        model = st["models"][comparison["best"]]
+        preds = st["label_encoder"].inverse_transform(model.predict(df_proc[FEATURE_COLS]))
+        row_risk = [risk_label(p) for p in preds]
+        cluster_risk = {
+            c: Counter(r for r, cl in zip(row_risk, labels) if cl == c).most_common(1)[0][0]
+            for c in range(k)
+        }
+    else:
+        cluster_risk = {c: assign_churn_risk(c, cluster_stats)["risk"] for c in range(k)}
+        row_risk = [cluster_risk[c] for c in labels]
+
     customers = []
-    for _, row in df_proc.iterrows():
+    for (_, row), row_label in zip(df_proc.iterrows(), row_risk):
         cid = int(row["Cluster"])
-        risk = assign_churn_risk(cid, cluster_stats)
+        risk = RISK_INFO[row_label]
         customers.append({
             "id":           int(row["CustomerID"]),
             "gender":       row["Gender"],
@@ -141,7 +162,7 @@ def run_clustering(email, k: int = 5):
     clusters = []
     for c in range(k):
         stats = cluster_stats[c]
-        risk_info = assign_churn_risk(c, cluster_stats)
+        risk_info = RISK_INFO[cluster_risk[c]]
         clusters.append({
             "id":          c,
             "count":       stats["count"],
@@ -237,14 +258,20 @@ def get_trends(email):
         df = standardize(parsed["df"].copy(), parsed["col_map"])
         spend = df["SpendingScore"]
         n = len(df)
+        if "ChurnRisk" in df.columns:
+            risk = df["ChurnRisk"].dropna().map(risk_label)
+        else:
+            risk = pd.cut(spend, [-np.inf, RISK_HIGH_BELOW, RISK_MEDIUM_BELOW, np.inf],
+                          right=False, labels=["High Risk", "Medium Risk", "Low Risk"])
+        share = lambda label: round(float((risk == label).mean() * 100), 1)
         points.append({
             "id":          up["id"],
             "filename":    up["filename"],
             "uploadedAt":  up["uploadedAt"],
             "rows":        n,
-            "highPct":     round(float((spend < RISK_HIGH_BELOW).mean() * 100), 1),
-            "mediumPct":   round(float(((spend >= RISK_HIGH_BELOW) & (spend < RISK_MEDIUM_BELOW)).mean() * 100), 1),
-            "lowPct":      round(float((spend >= RISK_MEDIUM_BELOW).mean() * 100), 1),
+            "highPct":     share("High Risk"),
+            "mediumPct":   share("Medium Risk"),
+            "lowPct":      share("Low Risk"),
             "avgSpending": round(float(spend.mean()), 1),
             "avgIncome":   round(float(df["AnnualIncome"].mean()), 1),
         })
@@ -271,15 +298,8 @@ def predict_customer(
     scaled_input = scaler.transform(raw)
     cluster = int(km.predict(scaled_input)[0])
 
-    cluster_stats = {
-        c["id"]: {
-            "avg_spending": c["avgSpending"],
-            "avg_income":   c["avgIncome"],
-        }
-        for c in result["clusters"]
-    }
-
-    segment_risk = assign_churn_risk(cluster, cluster_stats)
+    segment = next(c for c in result["clusters"] if c["id"] == cluster)
+    segment_risk = RISK_INFO[segment["churnRisk"]]
 
     # Default: use the cluster-based risk label
     churn_prediction = segment_risk["risk"]
@@ -304,14 +324,7 @@ def predict_customer(
         ]]
 
         pred = int(model.predict(features)[0])
-        churn_prediction = st["label_encoder"].inverse_transform([pred])[0]
-
-        if churn_prediction == "High":
-            churn_prediction = "High Risk"
-        elif churn_prediction == "Medium":
-            churn_prediction = "Medium Risk"
-        elif churn_prediction == "Low":
-            churn_prediction = "Low Risk"
+        churn_prediction = risk_label(st["label_encoder"].inverse_transform([pred])[0])
 
         probs = model.predict_proba(features)[0]
         confidence = round(float(max(probs) * 100), 1)

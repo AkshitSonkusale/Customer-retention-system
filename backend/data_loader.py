@@ -178,13 +178,24 @@ def preprocess(df: pd.DataFrame):
 
 
 # ── Churn risk from cluster stats ─────────────────────────────────────────────
-def assign_churn_risk(cluster_id: int, cluster_stats: dict) -> dict:
-    stats = cluster_stats[cluster_id]
-    spending = stats["avg_spending"]
+RISK_INFO = {
+    "High Risk":   {"risk": "High Risk",   "level": 3, "color": "#EF4444", "badge": "🔴"},
+    "Medium Risk": {"risk": "Medium Risk", "level": 2, "color": "#F59E0B", "badge": "🟡"},
+    "Low Risk":    {"risk": "Low Risk",    "level": 1, "color": "#10B981", "badge": "🟢"},
+}
 
+
+def risk_label(value) -> str:
+    """Normalise a ChurnRisk label ("High", "high risk", ...) to "High Risk" etc."""
+    word = str(value).strip().split()[0].title()
+    return f"{word} Risk"
+
+
+def assign_churn_risk(cluster_id: int, cluster_stats: dict) -> dict:
+    """Spending-score rule, used when the dataset has no ChurnRisk labels."""
+    spending = cluster_stats[cluster_id]["avg_spending"]
     if spending < RISK_HIGH_BELOW:
-        return {"risk": "High Risk",   "level": 3, "color": "#EF4444", "badge": "🔴"}
-    elif spending < RISK_MEDIUM_BELOW:
-        return {"risk": "Medium Risk", "level": 2, "color": "#F59E0B", "badge": "🟡"}
-    else:
-        return {"risk": "Low Risk",    "level": 1, "color": "#10B981", "badge": "🟢"}
+        return RISK_INFO["High Risk"]
+    if spending < RISK_MEDIUM_BELOW:
+        return RISK_INFO["Medium Risk"]
+    return RISK_INFO["Low Risk"]
